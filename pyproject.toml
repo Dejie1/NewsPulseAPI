@@ -1,0 +1,23 @@
+[project]
+name = "aggregator"
+version = "0.1.0"
+description = "RSS News Aggregator API for React Native app"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "feedparser>=6.0.10",
+    "httpx>=0.26.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "python-dateutil>=2.8.2",
+    "trafilatura>=1.6.0",
+    "sumy>=0.11.0",
+    "nltk>=3.8.0",
+    "scikit-learn>=1.4.0",
+    "numpy>=1.26.0",
+]
+
+[project.scripts]
+serve = "uvicorn app.main:app --reload --port 8000"

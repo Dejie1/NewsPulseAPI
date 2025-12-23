@@ -1,0 +1,139 @@
+"""
+Content extractor service using trafilatura.
+Crawls article URLs and extracts the main content.
+"""
+
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
+import trafilatura
+
+from app.models import Article
+from app.utils.rate_limiter import RateLimiter
+
+
+class ContentExtractorService:
+    """
+    Service for extracting full article content from URLs.
+    Uses trafilatura for robust content extraction.
+    """
+
+    def __init__(self, requests_per_second: float = 1.0):
+        # Slower rate limit for crawling (be nice to servers)
+        self.rate_limiter = RateLimiter(requests_per_second)
+        # Thread pool for blocking trafilatura calls
+        self._executor = ThreadPoolExecutor(max_workers=5)
+
+    async def extract_content(self, url: str) -> Optional[str]:
+        """
+        Extract main content from a URL.
+
+        Args:
+            url: The article URL to crawl
+
+        Returns:
+            Extracted text content, or None if extraction failed
+        """
+        try:
+            await self.rate_limiter.acquire()
+
+            # trafilatura is blocking, so run in thread pool
+            loop = asyncio.get_event_loop()
+            content = await loop.run_in_executor(
+                self._executor,
+                self._extract_sync,
+                url
+            )
+            return content
+
+        except Exception as e:
+            print(f"Content extraction failed for {url}: {e}")
+            return None
+
+    def _extract_sync(self, url: str) -> Optional[str]:
+        """
+        Synchronous content extraction (runs in thread pool).
+        """
+        try:
+            # Download and extract in one step
+            downloaded = trafilatura.fetch_url(url)
+            if not downloaded:
+                return None
+
+            # Extract main content
+            content = trafilatura.extract(
+                downloaded,
+                include_comments=False,
+                include_tables=False,
+                no_fallback=False,
+                favor_precision=True,
+            )
+
+            return content
+
+        except Exception as e:
+            print(f"Extraction error: {e}")
+            return None
+
+    async def extract_for_article(self, article: Article) -> Article:
+        """
+        Extract content for an article and return updated article.
+
+        Args:
+            article: Article to extract content for
+
+        Returns:
+            Updated Article with content field populated
+        """
+        if article.content_extracted:
+            return article
+
+        content = await self.extract_content(article.link)
+
+        # Create new article with content
+        return Article(
+            title=article.title,
+            link=article.link,
+            source=article.source,
+            published_at=article.published_at,
+            description=article.description,
+            image=article.image,
+            content=content,
+            content_extracted=True
+        )
+
+    async def extract_for_articles(
+        self,
+        articles: list[Article],
+        max_concurrent: int = 3
+    ) -> list[Article]:
+        """
+        Extract content for multiple articles with concurrency limit.
+
+        Args:
+            articles: List of articles to process
+            max_concurrent: Maximum concurrent extractions
+
+        Returns:
+            List of articles with content extracted
+        """
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def extract_with_semaphore(article: Article) -> Article:
+            async with semaphore:
+                return await self.extract_for_article(article)
+
+        tasks = [extract_with_semaphore(a) for a in articles]
+        return await asyncio.gather(*tasks)
+
+
+# Global extractor instance
+_extractor: Optional[ContentExtractorService] = None
+
+
+def get_content_extractor() -> ContentExtractorService:
+    """Get or create the global content extractor instance."""
+    global _extractor
+    if _extractor is None:
+        _extractor = ContentExtractorService()
+    return _extractor
