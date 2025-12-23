@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_prefix = "AGGREGATOR_"
+        extra = "ignore"  # Ignore NEXT_PUBLIC_* and other env vars
 
 
 # Global settings instance
