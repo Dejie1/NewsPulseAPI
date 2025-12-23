@@ -37,18 +37,42 @@ class SentimentAnalyzer:
         self._initialized = False
 
     def _ensure_initialized(self):
-        """Lazy initialization - downloads VADER lexicon if needed."""
+        """Lazy initialization - loads VADER lexicon from local file."""
         if self._initialized:
             return
 
+        import os
         import nltk
-        try:
-            nltk.data.find('sentiment/vader_lexicon.zip')
-        except LookupError:
-            nltk.download('vader_lexicon', quiet=True)
 
-        from nltk.sentiment.vader import SentimentIntensityAnalyzer
-        self._analyzer = SentimentIntensityAnalyzer()
+        # Add custom nltk_data paths
+        nltk_paths = [
+            '/home/www/nltk_data',
+            '/usr/share/nltk_data',
+            '/usr/local/share/nltk_data',
+            os.path.expanduser('~/nltk_data'),
+        ]
+        for path in nltk_paths:
+            if path not in nltk.data.path:
+                nltk.data.path.insert(0, path)
+
+        # Try to load VADER, download if not found (with SSL workaround)
+        try:
+            from nltk.sentiment.vader import SentimentIntensityAnalyzer
+            self._analyzer = SentimentIntensityAnalyzer()
+        except LookupError:
+            # Try downloading with SSL verification disabled
+            import ssl
+            try:
+                _create_unverified_https_context = ssl._create_unverified_context
+            except AttributeError:
+                pass
+            else:
+                ssl._default_https_context = _create_unverified_https_context
+
+            nltk.download('vader_lexicon', quiet=True)
+            from nltk.sentiment.vader import SentimentIntensityAnalyzer
+            self._analyzer = SentimentIntensityAnalyzer()
+
         self._initialized = True
 
     def analyze(self, text: str) -> SentimentScores:

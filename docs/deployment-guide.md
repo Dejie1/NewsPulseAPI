@@ -223,6 +223,33 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```
 
+## NLTK Setup (Required for Sentiment Analysis)
+
+NLTK needs the VADER lexicon for sentiment analysis. Download it manually:
+
+```bash
+# Create directory
+mkdir -p /home/www/nltk_data/sentiment
+mkdir -p /usr/share/nltk_data/sentiment
+
+# Download VADER lexicon (as actual zip file)
+cd /home/www/nltk_data/sentiment
+wget --no-check-certificate -O vader_lexicon.zip https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/sentiment/vader_lexicon.zip
+chown www:www vader_lexicon.zip
+
+cd /usr/share/nltk_data/sentiment
+wget --no-check-certificate -O vader_lexicon.zip https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/sentiment/vader_lexicon.zip
+chmod 644 vader_lexicon.zip
+```
+
+**Important**: The file must be an actual `.zip` file, not a directory named `.zip`.
+
+Verify:
+```bash
+file /home/www/nltk_data/sentiment/vader_lexicon.zip
+# Should output: "Zip archive data"
+```
+
 ## Troubleshooting
 
 ### Server not accessible
