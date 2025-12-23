@@ -700,10 +700,15 @@ async def sync_all_to_supabase(
         if not articles:
             return
 
-        # 2. Sync articles to Supabase (creates sources as needed)
+        # 2. Extract full content for articles (limit to avoid timeout)
+        await aggregator.extract_content_for_all(limit=50)
+        # Refresh articles list with extracted content
+        articles = aggregator.get_cached_articles(limit=200)
+
+        # 3. Sync articles to Supabase (creates sources as needed)
         await supabase_service.upsert_articles(articles)
 
-        # 3. Analyze sentiments and update articles
+        # 4. Analyze sentiments and update articles
         sentiments = []
         for article in articles:
             text = article.content or article.description or article.title
@@ -718,7 +723,7 @@ async def sync_all_to_supabase(
                 label=scores.label
             ))
 
-        # 4. Update overall_sentiment on articles
+        # 5. Update overall_sentiment on articles
         await supabase_service.upsert_sentiments(sentiments)
 
     background_tasks.add_task(full_sync)

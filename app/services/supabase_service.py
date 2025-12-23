@@ -150,6 +150,7 @@ class SupabaseService:
                 "image_url": article.image,  # image -> image_url
                 "published_at": article.published_at.isoformat() if article.published_at else None,
                 "category": None,  # Could map from feed category if available
+                "full_content": article.content,  # Full scraped content
             }
 
             if source_id:
