@@ -701,7 +701,7 @@ async def sync_all_to_supabase(
             return
 
         # 2. Extract full content for articles (limit to avoid timeout)
-        await aggregator.extract_content_for_all(limit=50)
+        await aggregator.extract_content_for_all(limit=60)
         # Refresh articles list with extracted content
         articles = aggregator.get_cached_articles(limit=200)
 

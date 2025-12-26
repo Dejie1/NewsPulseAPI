@@ -101,7 +101,8 @@ class RSSParserService:
                 source=source.name,
                 published_at=published_at,
                 description=description,
-                image=image
+                image=image,
+                category=source.category
             )
 
         except Exception:

@@ -16,6 +16,7 @@ class Article(BaseModel):
     published_at: datetime
     description: Optional[str] = None
     image: Optional[str] = None
+    category: Optional[str] = None  # Category from feed source
     content: Optional[str] = None  # Full article content (crawled)
     content_extracted: bool = False  # Whether content has been extracted
 

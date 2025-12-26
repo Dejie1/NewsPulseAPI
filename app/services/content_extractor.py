@@ -7,9 +7,28 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 import trafilatura
+import requests
+from urllib.parse import urlparse
 
 from app.models import Article
 from app.utils.rate_limiter import RateLimiter
+
+
+# Browser-like headers to avoid bot detection
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0",
+}
 
 
 class ContentExtractorService:
@@ -53,10 +72,27 @@ class ContentExtractorService:
     def _extract_sync(self, url: str) -> Optional[str]:
         """
         Synchronous content extraction (runs in thread pool).
+        Uses custom headers to mimic browser requests.
         """
         try:
-            # Download and extract in one step
-            downloaded = trafilatura.fetch_url(url)
+            # Build headers with proper Referer for the domain
+            parsed = urlparse(url)
+            headers = DEFAULT_HEADERS.copy()
+            headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+
+            # Use requests with browser-like headers instead of trafilatura.fetch_url
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=15,
+                allow_redirects=True
+            )
+
+            if response.status_code != 200:
+                print(f"HTTP {response.status_code} for {url}")
+                return None
+
+            downloaded = response.text
             if not downloaded:
                 return None
 
@@ -71,6 +107,12 @@ class ContentExtractorService:
 
             return content
 
+        except requests.exceptions.Timeout:
+            print(f"Timeout fetching {url}")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"Request error for {url}: {e}")
+            return None
         except Exception as e:
             print(f"Extraction error: {e}")
             return None
@@ -98,6 +140,7 @@ class ContentExtractorService:
             published_at=article.published_at,
             description=article.description,
             image=article.image,
+            category=article.category,
             content=content,
             content_extracted=True
         )
