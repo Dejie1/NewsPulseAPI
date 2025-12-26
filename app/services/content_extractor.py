@@ -9,6 +9,7 @@ from typing import Optional
 import trafilatura
 import requests
 from urllib.parse import urlparse
+from curl_cffi import requests as crequests  # Import the impersonating requests
 
 from app.models import Article
 from app.utils.rate_limiter import RateLimiter
@@ -77,19 +78,26 @@ class ContentExtractorService:
         try:
             # Build headers with proper Referer for the domain
             parsed = urlparse(url)
-            headers = DEFAULT_HEADERS.copy()
-            headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+
+            headers = {
+                "Referer": f"{parsed.scheme}://{parsed.netloc}/",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
 
             # Use requests with browser-like headers instead of trafilatura.fetch_url
-            response = requests.get(
+            response = crequests.get(
                 url,
                 headers=headers,
                 timeout=15,
-                allow_redirects=True
+                allow_redirects=True,
+                impersonate="chrome120"  # <--- THE MAGIC SAUCE
             )
 
             if response.status_code != 200:
                 print(f"HTTP {response.status_code} for {url}")
+                # Optional: specific handling for 403 (Blocked)
+                if response.status_code == 403:
+                    print("Request was blocked by anti-bot protection.")
                 return None
 
             downloaded = response.text
