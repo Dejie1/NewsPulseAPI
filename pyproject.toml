@@ -19,6 +19,13 @@ dependencies = [
     "numpy>=1.26.0",
     "supabase>=2.27.0",
     "curl-cffi>=0.14.0",
+    # NER with GLiNER-spaCy (gliner pinned to 0.2.10 for model compatibility)
+    "spacy>=3.7.0",
+    "gliner>=0.2.10,<0.2.11",
+    "gliner-spacy>=0.0.10",
+    # FinBERT for financial sentiment
+    "transformers>=4.36.0",
+    "torch>=2.1.0",
 ]
 
 [project.scripts]
