@@ -962,6 +962,19 @@ async def sync_company_mentions(
         if all_mentions:
             result = await supabase_service.upsert_company_mentions(all_mentions)
             print(f"Synced {result.get('inserted', 0)} company mentions")
+
+            # Update daily metrics for companies with mentions today
+            from datetime import datetime
+            today = datetime.utcnow().strftime("%Y-%m-%d")
+
+            company_ids_with_mentions = set(m["company_id"] for m in all_mentions)
+            for company_id in company_ids_with_mentions:
+                try:
+                    await supabase_service.update_daily_metrics(today, company_id)
+                except Exception as e:
+                    print(f"Error updating daily metrics for company {company_id}: {e}")
+
+            print(f"Updated daily metrics for {len(company_ids_with_mentions)} companies")
         else:
             print("No company mentions found to sync")
 
@@ -1097,6 +1110,21 @@ async def sync_all_to_supabase(
 
             if all_mentions:
                 await supabase_service.upsert_company_mentions(all_mentions)
+
+                # 7. Update daily metrics for companies with mentions today
+                from datetime import datetime
+                today = datetime.utcnow().strftime("%Y-%m-%d")
+
+                # Get unique company_ids from mentions
+                company_ids_with_mentions = set(m["company_id"] for m in all_mentions)
+
+                for company_id in company_ids_with_mentions:
+                    try:
+                        await supabase_service.update_daily_metrics(today, company_id)
+                    except Exception as e:
+                        print(f"Error updating daily metrics for company {company_id}: {e}")
+
+                print(f"Updated daily metrics for {len(company_ids_with_mentions)} companies")
 
     background_tasks.add_task(full_sync)
 

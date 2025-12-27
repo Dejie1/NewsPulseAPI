@@ -43,6 +43,7 @@ Article Content → GLiNER-spaCy (NER) → Company Mentions + Context Sentences
 ### 4. Database Sync
 - Results stored in `company_mentions` table
 - Links to `articles` and `companies` tables via foreign keys
+- `company_daily_metrics` table is auto-updated with daily aggregations
 
 ## Database Schema
 
@@ -159,6 +160,15 @@ curl -X POST "http://localhost:3000/api/news/supabase/sync/all?analyze_companies
 The existing systemd timer already calls `/api/news/supabase/sync/all`, which now includes company analysis by default.
 
 **No changes needed to the timer** - just restart the server after updating.
+
+The sync flow now includes:
+1. Fetch articles from RSS feeds
+2. Extract full content
+3. Sync articles to Supabase
+4. Analyze overall sentiment (VADER)
+5. Analyze company mentions (GLiNER + FinBERT)
+6. Sync company_mentions to Supabase
+7. **Update company_daily_metrics** (auto-aggregation)
 
 To disable company analysis in the sync:
 ```bash
