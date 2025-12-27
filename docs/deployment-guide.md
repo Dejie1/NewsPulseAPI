@@ -10,15 +10,17 @@
 ## Architecture
 
 ```
-Your Server (Hostinger)              Supabase
-┌─────────────────────────────┐      ┌─────────────────┐
-│  FastAPI Server             │      │                 │
-│  localhost:3000             │      │  articles table │
-│                             │      │  sources table  │
-│  systemd timer (every 6hrs) │      │                 │
-│       ↓                     │      │                 │
-│  curl POST /sync/articles   │─────→│  Data synced    │
-└─────────────────────────────┘      └─────────────────┘
+Your Server (Hostinger)                    Supabase
+┌───────────────────────────────────┐      ┌──────────────────────────┐
+│  FastAPI Server (localhost:3000)  │      │  articles table          │
+│                                   │      │  sources table           │
+│  + NER (GLiNER-spaCy)             │      │  companies table         │
+│  + FinBERT (financial sentiment)  │      │  company_mentions table  │
+│                                   │      │  company_daily_metrics   │
+│  systemd timer (every 6hrs)       │      │                          │
+│       ↓                           │      │                          │
+│  curl POST /sync/all              │─────→│  Data synced             │
+└───────────────────────────────────┘      └──────────────────────────┘
 ```
 
 **Note**: Supabase pg_net cannot reach Hostinger servers directly (TCP timeout issue).
@@ -159,13 +161,25 @@ sudo systemctl restart news-sync.timer
 | `/api/news/supabase/status` | GET | Check Supabase connection |
 | `/api/news/supabase/sync/articles` | POST | Sync articles to Supabase |
 | `/api/news/supabase/sync/sentiments` | POST | Analyze and sync sentiments |
-| `/api/news/supabase/sync/all` | POST | Full sync (background) |
+| `/api/news/supabase/sync/companies` | POST | Analyze and sync company mentions |
+| `/api/news/supabase/sync/all` | POST | Full sync (includes company analysis) |
+| `/api/news/supabase/seed/companies` | POST | Seed Magnificent 7 companies |
+
+### Company Analysis Endpoints (NEW)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/news/companies` | GET | List tracked companies |
+| `/api/news/companies/mentions/{ticker}` | GET | Get mentions for a company |
+| `/api/news/companies/metrics/{ticker}` | GET | Get daily sentiment metrics |
+| `/api/news/analyze/companies?url=...` | POST | Analyze single article for companies |
+| `/api/news/analyze/companies/batch` | POST | Batch analyze (background) |
 
 ### Other Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/news/sentiment?url=...` | GET | Analyze single article sentiment |
+| `/api/news/sentiment?url=...` | GET | Analyze single article sentiment (VADER) |
 | `/api/news/summarize?url=...` | GET | Summarize article content |
 | `/api/news/sources` | GET | List configured RSS sources |
 
@@ -210,6 +224,44 @@ CREATE INDEX IF NOT EXISTS idx_articles_source_id ON articles(source_id);
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS full_content TEXT;
 ```
 
+### Company Analysis Tables (NEW)
+
+```sql
+-- Companies table (Magnificent 7)
+CREATE TABLE IF NOT EXISTS companies (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    ticker TEXT UNIQUE NOT NULL,
+    icon_url TEXT
+);
+
+-- Company mentions (links articles to companies with sentiment)
+CREATE TABLE IF NOT EXISTS company_mentions (
+    id BIGSERIAL PRIMARY KEY,
+    article_id BIGINT REFERENCES articles(id),
+    company_id INTEGER REFERENCES companies(id),
+    sentiment_score FLOAT NOT NULL,
+    confidence_score FLOAT,
+    context_sentence TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(article_id, company_id)
+);
+
+-- Daily aggregated metrics
+CREATE TABLE IF NOT EXISTS company_daily_metrics (
+    date DATE NOT NULL,
+    company_id INTEGER REFERENCES companies(id),
+    avg_sentiment FLOAT,
+    article_volume INTEGER,
+    PRIMARY KEY (date, company_id)
+);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_company_mentions_article ON company_mentions(article_id);
+CREATE INDEX IF NOT EXISTS idx_company_mentions_company ON company_mentions(company_id);
+CREATE INDEX IF NOT EXISTS idx_company_mentions_created ON company_mentions(created_at DESC);
+```
+
 ## Environment Variables
 
 Create a `.env` file in the project root:
@@ -250,6 +302,83 @@ file /home/www/nltk_data/sentiment/vader_lexicon.zip
 # Should output: "Zip archive data"
 ```
 
+## Company Analysis Setup (NER + FinBERT)
+
+The company analysis feature uses GLiNER-spaCy for NER and FinBERT for financial sentiment.
+It detects mentions of the Magnificent 7 (Apple, Microsoft, Google, Amazon, Meta, Tesla, Nvidia).
+
+### 1. Install New Dependencies
+
+```bash
+cd /www/wwwroot/aggregator  # or your project path
+
+# Install with uv
+uv sync
+
+# Or with pip (CPU-only torch recommended for servers)
+pip install spacy>=3.7.0 gliner-spacy>=0.0.10 transformers>=4.36.0
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+**Memory Note**: Models require ~2-3GB RAM when loaded. Ensure your server has sufficient memory.
+
+### 2. Create Database Tables
+
+Run in Supabase SQL Editor (see "Company Analysis Tables" section above).
+
+### 3. Seed Companies
+
+After server restart, seed the Magnificent 7:
+```bash
+curl -X POST http://localhost:3000/api/news/supabase/seed/companies
+```
+
+### 4. Verify Setup
+
+Test the analysis endpoint:
+```bash
+# First request will be slow (models loading ~30-60 seconds)
+curl -X POST "http://localhost:3000/api/news/analyze/companies?url=<article_url>"
+```
+
+### 5. Integration with Timer
+
+**Good news: No timer changes needed!**
+
+The existing `/api/news/supabase/sync/all` endpoint now includes company analysis by default.
+Just restart the server and the next timer run will include company analysis.
+
+To explicitly control company analysis:
+```bash
+# With company analysis (default)
+curl -X POST "http://localhost:3000/api/news/supabase/sync/all?analyze_companies=true"
+
+# Without company analysis
+curl -X POST "http://localhost:3000/api/news/supabase/sync/all?analyze_companies=false"
+```
+
+### 6. Monitor Company Analysis
+
+```bash
+# Check companies in database
+curl http://localhost:3000/api/news/companies
+
+# Check mentions for a specific company
+curl "http://localhost:3000/api/news/companies/mentions/AAPL?days=7"
+
+# Check daily metrics
+curl "http://localhost:3000/api/news/companies/metrics/TSLA?days=7"
+```
+
+### Performance Tips
+
+1. **First sync is slow**: Models load on first use (~30-60 seconds)
+2. **Warm up after restart**: Run a test analysis after server restart
+3. **Memory monitoring**: Watch RAM usage during sync
+   ```bash
+   watch -n 5 free -h
+   ```
+
 ## Troubleshooting
 
 ### Server not accessible
@@ -283,3 +412,40 @@ curl http://localhost:3000/api/news/supabase/status
 ```bash
 sudo journalctl -u news-sync.service --since "1 hour ago"
 ```
+
+### Company analysis not working
+
+1. Check if models are loading:
+   ```bash
+   sudo journalctl -u news-aggregator --since "1 hour ago" | grep -i "ner\|finbert\|gliner"
+   ```
+
+2. Check memory (models need ~2-3GB):
+   ```bash
+   free -h
+   ```
+
+3. Test models manually:
+   ```bash
+   python -c "from transformers import pipeline; p = pipeline('sentiment-analysis', model='ProsusAI/finbert'); print('OK')"
+   ```
+
+4. If GLiNER fails, the system falls back to regex pattern matching (still works, just less accurate)
+
+### No company mentions found
+
+1. Verify companies are seeded:
+   ```bash
+   curl http://localhost:3000/api/news/companies
+   ```
+
+2. Check if articles have content:
+   ```bash
+   curl "http://localhost:3000/api/news/supabase/articles?limit=5"
+   # Look for "full_content" field
+   ```
+
+3. Run content extraction first:
+   ```bash
+   curl -X POST http://localhost:3000/api/news/extract-content?limit=20
+   ```
