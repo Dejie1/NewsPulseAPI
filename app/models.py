@@ -120,3 +120,78 @@ class RecommendationResponse(BaseModel):
     query_article: Optional[str] = None
     recommendations: list[RecommendationItem] = Field(default_factory=list)
     algorithm: str = "tfidf_cosine"
+
+
+# =============================================================================
+# COMPANY ANALYSIS MODELS (NER + FinBERT)
+# =============================================================================
+
+class CompanyEntityResult(BaseModel):
+    """A detected company entity from NER."""
+    company_name: str = Field(description="Normalized company name (e.g., 'Google')")
+    ticker: str = Field(description="Stock ticker symbol (e.g., 'GOOGL')")
+    matched_text: str = Field(description="Original text that matched")
+    confidence: float = Field(ge=0, le=1, description="NER confidence score")
+    context_sentence: str = Field(description="Sentence containing the mention")
+
+
+class FinancialSentimentResult(BaseModel):
+    """Financial sentiment analysis result from FinBERT."""
+    sentiment: str = Field(description="positive, negative, or neutral")
+    score: float = Field(ge=0, le=1, description="Confidence score")
+    positive_prob: float = Field(ge=0, le=1)
+    negative_prob: float = Field(ge=0, le=1)
+    neutral_prob: float = Field(ge=0, le=1)
+
+
+class CompanyMentionResult(BaseModel):
+    """Complete company mention with NER + FinBERT analysis."""
+    company_name: str
+    ticker: str
+    sentiment_score: float = Field(ge=-1, le=1, description="Normalized sentiment (-1 to 1)")
+    confidence_score: float = Field(ge=0, le=1, description="NER confidence")
+    context_sentence: str
+    sentiment_label: str = Field(description="positive, negative, or neutral")
+
+
+class ArticleCompanyAnalysis(BaseModel):
+    """Analysis results for a single article."""
+    article_url: str
+    article_title: str
+    mentions: list[CompanyMentionResult] = Field(default_factory=list)
+    companies_found: int = 0
+
+
+class CompanyAnalysisResponse(BaseModel):
+    """Response for company analysis endpoints."""
+    success: bool
+    articles_analyzed: int = 0
+    total_mentions: int = 0
+    results: list[ArticleCompanyAnalysis] = Field(default_factory=list)
+
+
+class CompanyInfo(BaseModel):
+    """Company information from the database."""
+    id: int
+    name: str
+    ticker: str
+    icon_url: Optional[str] = None
+
+
+class CompanyMentionRecord(BaseModel):
+    """A company mention record for database operations."""
+    article_id: int
+    company_id: int
+    sentiment_score: float
+    confidence_score: float
+    context_sentence: str
+
+
+class CompanyDailyMetrics(BaseModel):
+    """Daily aggregated metrics for a company."""
+    date: str
+    company_id: int
+    company_name: Optional[str] = None
+    ticker: Optional[str] = None
+    avg_sentiment: float
+    article_volume: int

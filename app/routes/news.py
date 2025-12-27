@@ -16,7 +16,10 @@ from app.models import (
     SentimentResult,
     SentimentAnalysisResponse,
     RecommendationItem,
-    RecommendationResponse
+    RecommendationResponse,
+    CompanyMentionResult,
+    ArticleCompanyAnalysis,
+    CompanyAnalysisResponse,
 )
 from app.services.aggregator import get_aggregator
 from app.services.summarizer import get_summarization_service
@@ -668,13 +671,347 @@ async def sync_sentiments_to_supabase(
     }
 
 
+@router.get("/supabase/articles")
+async def get_articles_from_supabase(
+    limit: int = Query(50, ge=1, le=200, description="Number of articles to fetch"),
+    source: Optional[str] = Query(None, description="Filter by source")
+) -> dict:
+    """
+    Fetch articles directly from Supabase.
+
+    Useful for verifying sync worked correctly.
+    """
+    if not supabase_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase not configured"
+        )
+
+    articles = await supabase_service.get_articles(limit=limit, source=source)
+
+    return {
+        "success": True,
+        "count": len(articles),
+        "articles": articles
+    }
+
+
+@router.delete("/supabase/articles/old")
+async def cleanup_old_articles(
+    days: int = Query(30, ge=1, le=365, description="Delete articles older than N days")
+) -> dict:
+    """
+    Delete old articles from Supabase to manage storage.
+    """
+    if not supabase_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase not configured"
+        )
+
+    result = await supabase_service.delete_old_articles(days=days)
+
+    return result
+
+
+# =============================================================================
+# COMPANY ANALYSIS ENDPOINTS (NER + FinBERT)
+# =============================================================================
+
+@router.get("/companies")
+async def get_tracked_companies() -> dict:
+    """
+    Get list of companies being tracked (Magnificent 7).
+
+    Returns company info from the database if Supabase is configured,
+    otherwise returns the default list.
+    """
+    if supabase_service.is_configured():
+        companies = await supabase_service.get_all_companies()
+        if companies:
+            return {
+                "success": True,
+                "companies": companies,
+                "source": "database"
+            }
+
+    # Fallback to NER service tracked companies
+    from app.services.ner_service import get_ner_service
+    ner_service = get_ner_service()
+
+    return {
+        "success": True,
+        "companies": ner_service.get_tracked_companies(),
+        "source": "config"
+    }
+
+
+@router.get("/companies/mentions/{ticker}")
+async def get_company_mentions(
+    ticker: str,
+    limit: int = Query(20, ge=1, le=100, description="Number of mentions to return"),
+    days: int = Query(7, ge=1, le=30, description="Look back period in days")
+) -> dict:
+    """
+    Get recent mentions for a specific company by ticker.
+
+    Includes sentiment scores and context sentences.
+    """
+    if not supabase_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase not configured"
+        )
+
+    mentions = await supabase_service.get_company_mentions(
+        ticker=ticker.upper(),
+        limit=limit,
+        days=days
+    )
+
+    return {
+        "success": True,
+        "ticker": ticker.upper(),
+        "mentions": mentions,
+        "count": len(mentions)
+    }
+
+
+@router.post("/analyze/companies", response_model=CompanyAnalysisResponse)
+async def analyze_article_companies(
+    url: str = Query(..., description="Article URL to analyze")
+) -> CompanyAnalysisResponse:
+    """
+    Analyze company mentions in a single article.
+
+    - Extracts content if needed
+    - Runs GLiNER-spaCy NER to detect Magnificent 7 company mentions
+    - Analyzes financial sentiment with FinBERT for each mention
+    - Returns structured results with context and sentiment
+
+    Note: First call may be slow as ML models are loaded lazily.
+    """
+    aggregator = get_aggregator()
+
+    # Get article with content
+    article = await aggregator.extract_content_for_article(url)
+    if not article:
+        raise HTTPException(
+            status_code=404,
+            detail="Article not found. Fetch news first with GET /api/news/"
+        )
+
+    if not article.content:
+        raise HTTPException(
+            status_code=400,
+            detail="Article has no content. Content extraction may have failed."
+        )
+
+    # Analyze with NER + FinBERT
+    from app.services.company_analysis_service import get_company_analyzer
+    analyzer = get_company_analyzer()
+
+    mentions = await analyzer.analyze_text(article.content)
+
+    return CompanyAnalysisResponse(
+        success=True,
+        articles_analyzed=1,
+        total_mentions=len(mentions),
+        results=[ArticleCompanyAnalysis(
+            article_url=article.link,
+            article_title=article.title,
+            mentions=[
+                CompanyMentionResult(
+                    company_name=m.company_name,
+                    ticker=m.ticker,
+                    sentiment_score=m.sentiment_score,
+                    confidence_score=m.confidence_score,
+                    context_sentence=m.context_sentence,
+                    sentiment_label=m.sentiment_label
+                )
+                for m in mentions
+            ],
+            companies_found=len(set(m.ticker for m in mentions))
+        )]
+    )
+
+
+@router.post("/analyze/companies/batch")
+async def analyze_companies_batch(
+    background_tasks: BackgroundTasks,
+    limit: int = Query(20, ge=1, le=50, description="Number of articles to analyze")
+) -> dict:
+    """
+    Analyze company mentions for multiple articles in background.
+
+    Processes articles that have content extracted.
+    Use GET /api/news/status to monitor progress.
+    """
+    aggregator = get_aggregator()
+
+    # Check if there are articles with content
+    articles = aggregator.get_cached_articles(limit=limit)
+    articles_with_content = [a for a in articles if a.content]
+
+    if not articles_with_content:
+        return {
+            "message": "No articles with content found. Run content extraction first.",
+            "status": "skipped",
+            "articles_found": 0
+        }
+
+    async def run_analysis():
+        from app.services.company_analysis_service import get_company_analyzer
+        analyzer = get_company_analyzer()
+
+        for article in articles_with_content:
+            try:
+                await analyzer.analyze_text(article.content)
+            except Exception as e:
+                print(f"Error analyzing {article.link}: {e}")
+
+    background_tasks.add_task(run_analysis)
+
+    return {
+        "message": f"Company analysis started for {len(articles_with_content)} articles",
+        "status": "processing",
+        "articles_found": len(articles_with_content)
+    }
+
+
+@router.post("/supabase/seed/companies")
+async def seed_companies() -> dict:
+    """
+    Seed the companies table with Magnificent 7 companies.
+
+    This should be run once to populate the companies table.
+    """
+    if not supabase_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase not configured"
+        )
+
+    result = await supabase_service.seed_companies()
+    return result
+
+
+@router.post("/supabase/sync/companies")
+async def sync_company_mentions(
+    background_tasks: BackgroundTasks,
+    limit: int = Query(50, ge=1, le=200, description="Number of articles to analyze"),
+    force_reanalyze: bool = Query(False, description="Re-analyze articles already processed")
+) -> dict:
+    """
+    Analyze articles for company mentions and sync to Supabase.
+
+    - Fetches articles with content from Supabase
+    - Runs NER + FinBERT analysis on each
+    - Upserts results to company_mentions table
+
+    This is the main endpoint for syncing company analysis.
+    """
+    if not supabase_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase not configured"
+        )
+
+    async def full_company_sync():
+        from app.services.company_analysis_service import get_company_analyzer
+        analyzer = get_company_analyzer()
+
+        # Get articles to analyze
+        articles = await supabase_service.get_articles_for_analysis(
+            limit=limit,
+            only_unanalyzed=not force_reanalyze
+        )
+
+        if not articles:
+            print("No articles to analyze for company mentions")
+            return
+
+        print(f"Analyzing {len(articles)} articles for company mentions")
+
+        all_mentions = []
+        for article in articles:
+            content = article.get("full_content")
+            if not content:
+                continue
+
+            try:
+                mentions = await analyzer.analyze_text(content)
+
+                for mention in mentions:
+                    company_id = await supabase_service.get_company_by_ticker(
+                        mention.ticker
+                    )
+                    if company_id:
+                        all_mentions.append({
+                            "article_id": article["id"],
+                            "company_id": company_id,
+                            "sentiment_score": mention.sentiment_score,
+                            "confidence_score": mention.confidence_score,
+                            "context_sentence": mention.context_sentence[:500]
+                        })
+
+            except Exception as e:
+                print(f"Error analyzing article {article.get('id')}: {e}")
+
+        # Upsert to Supabase
+        if all_mentions:
+            result = await supabase_service.upsert_company_mentions(all_mentions)
+            print(f"Synced {result.get('inserted', 0)} company mentions")
+        else:
+            print("No company mentions found to sync")
+
+    background_tasks.add_task(full_company_sync)
+
+    return {
+        "message": f"Company analysis sync started for up to {limit} articles",
+        "status": "processing",
+        "force_reanalyze": force_reanalyze
+    }
+
+
+@router.get("/companies/metrics/{ticker}")
+async def get_company_metrics(
+    ticker: str,
+    days: int = Query(7, ge=1, le=90, description="Number of days to fetch")
+) -> dict:
+    """
+    Get daily sentiment metrics for a company.
+
+    Returns time series data useful for charting sentiment trends.
+    """
+    if not supabase_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase not configured"
+        )
+
+    metrics = await supabase_service.get_company_daily_metrics(
+        ticker=ticker.upper(),
+        days=days
+    )
+
+    return {
+        "success": True,
+        "ticker": ticker.upper(),
+        "days": days,
+        "metrics": metrics,
+        "count": len(metrics)
+    }
+
+
 @router.post("/supabase/sync/all")
 async def sync_all_to_supabase(
     background_tasks: BackgroundTasks,
-    force_refresh: bool = Query(False, description="Force fetch fresh articles")
+    force_refresh: bool = Query(False, description="Force fetch fresh articles"),
+    analyze_companies: bool = Query(True, description="Include company NER analysis")
 ) -> dict:
     """
-    Sync articles AND sentiments to Supabase in the background.
+    Sync articles, sentiments, AND company mentions to Supabase in the background.
 
     This is the recommended endpoint for pg_cron jobs:
     ```sql
@@ -726,52 +1063,45 @@ async def sync_all_to_supabase(
         # 5. Update overall_sentiment on articles
         await supabase_service.upsert_sentiments(sentiments)
 
+        # 6. Analyze companies and sync mentions (NEW)
+        if analyze_companies:
+            from app.services.company_analysis_service import get_company_analyzer
+            company_analyzer = get_company_analyzer()
+
+            all_mentions = []
+            for article in articles:
+                if not article.content:
+                    continue
+
+                article_id = await supabase_service.get_article_id_by_url(article.link)
+                if not article_id:
+                    continue
+
+                try:
+                    mentions = await company_analyzer.analyze_text(article.content)
+
+                    for mention in mentions:
+                        company_id = await supabase_service.get_company_by_ticker(
+                            mention.ticker
+                        )
+                        if company_id:
+                            all_mentions.append({
+                                "article_id": article_id,
+                                "company_id": company_id,
+                                "sentiment_score": mention.sentiment_score,
+                                "confidence_score": mention.confidence_score,
+                                "context_sentence": mention.context_sentence[:500]
+                            })
+                except Exception as e:
+                    print(f"Error analyzing companies for {article.link}: {e}")
+
+            if all_mentions:
+                await supabase_service.upsert_company_mentions(all_mentions)
+
     background_tasks.add_task(full_sync)
 
     return {
         "message": "Full sync started in background",
-        "status": "processing"
+        "status": "processing",
+        "analyze_companies": analyze_companies
     }
-
-
-@router.get("/supabase/articles")
-async def get_articles_from_supabase(
-    limit: int = Query(50, ge=1, le=200, description="Number of articles to fetch"),
-    source: Optional[str] = Query(None, description="Filter by source")
-) -> dict:
-    """
-    Fetch articles directly from Supabase.
-
-    Useful for verifying sync worked correctly.
-    """
-    if not supabase_service.is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Supabase not configured"
-        )
-
-    articles = await supabase_service.get_articles(limit=limit, source=source)
-
-    return {
-        "success": True,
-        "count": len(articles),
-        "articles": articles
-    }
-
-
-@router.delete("/supabase/articles/old")
-async def cleanup_old_articles(
-    days: int = Query(30, ge=1, le=365, description="Delete articles older than N days")
-) -> dict:
-    """
-    Delete old articles from Supabase to manage storage.
-    """
-    if not supabase_service.is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Supabase not configured"
-        )
-
-    result = await supabase_service.delete_old_articles(days=days)
-
-    return result

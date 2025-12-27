@@ -286,5 +286,352 @@ class SupabaseService:
             raise Exception(f"Error fetching sources: {str(e)}")
 
 
+    # =========================================================================
+    # COMPANY-RELATED METHODS
+    # =========================================================================
+
+    async def get_all_companies(self) -> list[dict]:
+        """Get all companies from the database."""
+        try:
+            response = self.client.table("companies")\
+                .select("*")\
+                .order("name")\
+                .execute()
+
+            return response.data if response.data else []
+
+        except Exception as e:
+            print(f"Error fetching companies: {e}")
+            return []
+
+    async def get_company_by_ticker(self, ticker: str) -> Optional[int]:
+        """
+        Get company_id by ticker symbol.
+
+        Args:
+            ticker: Stock ticker (e.g., "AAPL")
+
+        Returns:
+            Company ID or None if not found
+        """
+        # Check cache first
+        cache_key = f"company_{ticker}"
+        if cache_key in self._sources_cache:
+            return self._sources_cache[cache_key]
+
+        try:
+            response = self.client.table("companies")\
+                .select("id")\
+                .eq("ticker", ticker)\
+                .single()\
+                .execute()
+
+            if response.data:
+                company_id = response.data["id"]
+                self._sources_cache[cache_key] = company_id
+                return company_id
+
+        except Exception as e:
+            print(f"Error fetching company {ticker}: {e}")
+
+        return None
+
+    async def get_article_id_by_url(self, url: str) -> Optional[int]:
+        """Get article ID by URL."""
+        try:
+            response = self.client.table("articles")\
+                .select("id")\
+                .eq("url", url)\
+                .single()\
+                .execute()
+
+            return response.data["id"] if response.data else None
+
+        except Exception:
+            return None
+
+    async def get_articles_for_analysis(
+        self,
+        limit: int = 50,
+        only_unanalyzed: bool = True
+    ) -> list[dict]:
+        """
+        Get articles that need company analysis.
+
+        Args:
+            limit: Maximum articles to return
+            only_unanalyzed: If True, exclude articles already in company_mentions
+
+        Returns:
+            List of article dicts with id, url, title, full_content
+        """
+        try:
+            query = self.client.table("articles")\
+                .select("id, url, title, full_content")\
+                .not_.is_("full_content", "null")\
+                .order("published_at", desc=True)\
+                .limit(limit)
+
+            response = query.execute()
+            articles = response.data if response.data else []
+
+            if only_unanalyzed and articles:
+                # Filter out articles that already have mentions
+                # Get article IDs that have mentions
+                article_ids = [a["id"] for a in articles]
+                mentions_response = self.client.table("company_mentions")\
+                    .select("article_id")\
+                    .in_("article_id", article_ids)\
+                    .execute()
+
+                analyzed_ids = set(
+                    m["article_id"] for m in (mentions_response.data or [])
+                )
+
+                articles = [a for a in articles if a["id"] not in analyzed_ids]
+
+            return articles
+
+        except Exception as e:
+            print(f"Error fetching articles for analysis: {e}")
+            return []
+
+    async def upsert_company_mentions(self, mentions: list[dict]) -> dict:
+        """
+        Upsert company mentions to Supabase.
+
+        Each mention dict should have:
+        - article_id: int
+        - company_id: int
+        - sentiment_score: float
+        - confidence_score: float
+        - context_sentence: str
+
+        Returns:
+            Result dict with counts and errors
+        """
+        if not mentions:
+            return {"inserted": 0, "message": "No mentions to sync"}
+
+        results = {"inserted": 0, "errors": [], "total": len(mentions)}
+
+        try:
+            # Deduplicate by (article_id, company_id) - keep highest confidence
+            unique_mentions: dict[tuple[int, int], dict] = {}
+            for mention in mentions:
+                key = (mention["article_id"], mention["company_id"])
+                if key not in unique_mentions:
+                    unique_mentions[key] = mention
+                else:
+                    # Keep the one with higher confidence, or average sentiments
+                    existing = unique_mentions[key]
+                    if mention["confidence_score"] > existing["confidence_score"]:
+                        # Average the sentiment scores
+                        avg_sentiment = (existing["sentiment_score"] + mention["sentiment_score"]) / 2
+                        mention["sentiment_score"] = avg_sentiment
+                        unique_mentions[key] = mention
+
+            deduped_mentions = list(unique_mentions.values())
+
+            # Upsert all mentions
+            response = self.client.table("company_mentions").upsert(
+                deduped_mentions,
+                on_conflict="article_id,company_id"
+            ).execute()
+
+            results["inserted"] = len(response.data) if response.data else 0
+            results["message"] = f"Successfully synced {results['inserted']} company mentions"
+
+        except Exception as e:
+            results["errors"].append(str(e))
+            results["message"] = f"Error syncing mentions: {str(e)}"
+
+        return results
+
+    async def get_company_mentions(
+        self,
+        ticker: Optional[str] = None,
+        limit: int = 50,
+        days: int = 7
+    ) -> list[dict]:
+        """
+        Get company mentions with article info.
+
+        Args:
+            ticker: Filter by company ticker (optional)
+            limit: Maximum mentions to return
+            days: Only mentions from last N days
+
+        Returns:
+            List of mention dicts with article and company info
+        """
+        from datetime import timedelta
+
+        try:
+            cutoff_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+            query = self.client.table("company_mentions")\
+                .select("*, articles(id, title, url, published_at), companies(name, ticker)")\
+                .gte("created_at", cutoff_date)\
+                .order("created_at", desc=True)\
+                .limit(limit)
+
+            if ticker:
+                # Need to filter by company ticker via join
+                # First get company_id
+                company_id = await self.get_company_by_ticker(ticker)
+                if company_id:
+                    query = query.eq("company_id", company_id)
+                else:
+                    return []
+
+            response = query.execute()
+            return response.data if response.data else []
+
+        except Exception as e:
+            print(f"Error fetching company mentions: {e}")
+            return []
+
+    async def seed_companies(self) -> dict:
+        """
+        Seed the companies table with Magnificent 7.
+
+        Returns:
+            Result dict with count
+        """
+        companies = [
+            {
+                "name": "Apple",
+                "ticker": "AAPL",
+                "icon_url": "https://logo.clearbit.com/apple.com"
+            },
+            {
+                "name": "Microsoft",
+                "ticker": "MSFT",
+                "icon_url": "https://logo.clearbit.com/microsoft.com"
+            },
+            {
+                "name": "Google",
+                "ticker": "GOOGL",
+                "icon_url": "https://logo.clearbit.com/google.com"
+            },
+            {
+                "name": "Amazon",
+                "ticker": "AMZN",
+                "icon_url": "https://logo.clearbit.com/amazon.com"
+            },
+            {
+                "name": "Meta",
+                "ticker": "META",
+                "icon_url": "https://logo.clearbit.com/meta.com"
+            },
+            {
+                "name": "Tesla",
+                "ticker": "TSLA",
+                "icon_url": "https://logo.clearbit.com/tesla.com"
+            },
+            {
+                "name": "Nvidia",
+                "ticker": "NVDA",
+                "icon_url": "https://logo.clearbit.com/nvidia.com"
+            },
+        ]
+
+        try:
+            response = self.client.table("companies").upsert(
+                companies,
+                on_conflict="ticker"
+            ).execute()
+
+            return {
+                "seeded": len(response.data) if response.data else 0,
+                "message": "Magnificent 7 companies seeded successfully"
+            }
+
+        except Exception as e:
+            return {"seeded": 0, "error": str(e)}
+
+    async def update_daily_metrics(
+        self,
+        date: str,
+        company_id: int
+    ) -> bool:
+        """
+        Update company_daily_metrics aggregation for a specific day.
+
+        Args:
+            date: Date string (YYYY-MM-DD)
+            company_id: Company ID
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Get all mentions for this company on this date
+            response = self.client.table("company_mentions")\
+                .select("sentiment_score")\
+                .eq("company_id", company_id)\
+                .gte("created_at", f"{date}T00:00:00")\
+                .lt("created_at", f"{date}T23:59:59")\
+                .execute()
+
+            mentions = response.data or []
+
+            if not mentions:
+                return True
+
+            avg_sentiment = sum(m["sentiment_score"] for m in mentions) / len(mentions)
+
+            self.client.table("company_daily_metrics").upsert({
+                "date": date,
+                "company_id": company_id,
+                "avg_sentiment": avg_sentiment,
+                "article_volume": len(mentions)
+            }, on_conflict="date,company_id").execute()
+
+            return True
+
+        except Exception as e:
+            print(f"Error updating daily metrics: {e}")
+            return False
+
+    async def get_company_daily_metrics(
+        self,
+        ticker: str,
+        days: int = 7
+    ) -> list[dict]:
+        """
+        Get daily metrics for a company.
+
+        Args:
+            ticker: Company ticker
+            days: Number of days to fetch
+
+        Returns:
+            List of daily metric records
+        """
+        from datetime import timedelta
+
+        try:
+            company_id = await self.get_company_by_ticker(ticker)
+            if not company_id:
+                return []
+
+            cutoff_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+            response = self.client.table("company_daily_metrics")\
+                .select("*")\
+                .eq("company_id", company_id)\
+                .gte("date", cutoff_date)\
+                .order("date", desc=True)\
+                .execute()
+
+            return response.data if response.data else []
+
+        except Exception as e:
+            print(f"Error fetching daily metrics: {e}")
+            return []
+
+
 # Global service instance
 supabase_service = SupabaseService()
