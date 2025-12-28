@@ -1043,22 +1043,48 @@ async def sync_all_to_supabase(
         aggregator = get_aggregator()
         analyzer = get_sentiment_analyzer()
 
-        # 1. Fetch fresh articles
+        # 1. Fetch fresh articles from RSS
         result = await aggregator.aggregate(force_refresh=force_refresh)
         articles = result.articles
 
         if not articles:
+            print("[sync] No articles fetched from RSS")
             return
 
-        # 2. Extract full content for articles (limit to avoid timeout)
-        await aggregator.extract_content_for_all(limit=60)
+        print(f"[sync] Fetched {len(articles)} articles from RSS")
+
+        # 2. Get URLs that already have content in Supabase (skip re-extraction)
+        urls_with_content = await supabase_service.get_urls_with_content()
+        print(f"[sync] Found {len(urls_with_content)} articles with existing content in Supabase")
+
+        # 3. Extract content ONLY for articles missing content
+        from app.services.content_extractor import get_content_extractor
+        content_extractor = get_content_extractor()
+
+        articles_needing_content = [
+            a for a in articles
+            if a.link not in urls_with_content and not a.content_extracted
+        ][:60]  # Limit to avoid timeout
+
+        print(f"[sync] Extracting content for {len(articles_needing_content)} new articles")
+
+        if articles_needing_content:
+            updated_articles = await content_extractor.extract_for_articles(
+                articles_needing_content,
+                max_concurrent=3
+            )
+            # Update cache with extracted content
+            for updated in updated_articles:
+                aggregator._update_article_in_cache(updated)
+
         # Refresh articles list with extracted content
         articles = aggregator.get_cached_articles(limit=200)
 
-        # 3. Sync articles to Supabase (creates sources as needed)
+        # 4. Sync articles to Supabase (creates sources as needed)
         await supabase_service.upsert_articles(articles)
+        print(f"[sync] Synced {len(articles)} articles to Supabase")
 
-        # 4. Analyze sentiments and update articles
+        # 5. Analyze sentiments and update articles
         sentiments = []
         for article in articles:
             text = article.content or article.description or article.title
@@ -1073,10 +1099,10 @@ async def sync_all_to_supabase(
                 label=scores.label
             ))
 
-        # 5. Update overall_sentiment on articles
+        # 6. Update overall_sentiment on articles
         await supabase_service.upsert_sentiments(sentiments)
 
-        # 6. Analyze companies and sync mentions (NEW)
+        # 7. Analyze companies and sync mentions
         if analyze_companies:
             from app.services.company_analysis_service import get_company_analyzer
             company_analyzer = get_company_analyzer()
@@ -1111,7 +1137,7 @@ async def sync_all_to_supabase(
             if all_mentions:
                 await supabase_service.upsert_company_mentions(all_mentions)
 
-                # 7. Update daily metrics for companies with mentions today
+                # 8. Update daily metrics for companies with mentions today
                 from datetime import datetime
                 today = datetime.utcnow().strftime("%Y-%m-%d")
 

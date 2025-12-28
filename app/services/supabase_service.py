@@ -164,9 +164,12 @@ class SupabaseService:
 
         try:
             # Upsert with conflict resolution on 'url'
+            # default_to_null=False prevents overwriting existing columns with NULL
+            # when those columns are not included in the payload
             response = self.client.table("articles").upsert(
                 rows,
-                on_conflict="url"
+                on_conflict="url",
+                default_to_null=False
             ).execute()
 
             results["inserted"] = len(response.data) if response.data else 0
@@ -254,6 +257,23 @@ class SupabaseService:
 
         except Exception:
             return None
+
+    async def get_urls_with_content(self) -> set[str]:
+        """
+        Get set of article URLs that already have full_content extracted.
+        Used to skip re-extraction during sync.
+        """
+        try:
+            response = self.client.table("articles")\
+                .select("url")\
+                .not_.is_("full_content", "null")\
+                .execute()
+
+            return {row["url"] for row in (response.data or [])}
+
+        except Exception as e:
+            print(f"Error fetching URLs with content: {e}")
+            return set()
 
     async def delete_old_articles(self, days: int = 30) -> dict:
         """Delete articles older than specified days."""
@@ -440,7 +460,8 @@ class SupabaseService:
             # Upsert all mentions
             response = self.client.table("company_mentions").upsert(
                 deduped_mentions,
-                on_conflict="article_id,company_id"
+                on_conflict="article_id,company_id",
+                default_to_null=False
             ).execute()
 
             results["inserted"] = len(response.data) if response.data else 0
@@ -544,7 +565,8 @@ class SupabaseService:
         try:
             response = self.client.table("companies").upsert(
                 companies,
-                on_conflict="ticker"
+                on_conflict="ticker",
+                default_to_null=False
             ).execute()
 
             return {
@@ -591,7 +613,7 @@ class SupabaseService:
                 "company_id": company_id,
                 "avg_sentiment": avg_sentiment,
                 "article_volume": len(mentions)
-            }, on_conflict="date,company_id").execute()
+            }, on_conflict="date,company_id", default_to_null=False).execute()
 
             return True
 
