@@ -4,6 +4,7 @@ Crawls article URLs and extracts the main content.
 """
 
 import asyncio
+import random
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 import trafilatura
@@ -57,6 +58,10 @@ class ContentExtractorService:
         try:
             await self.rate_limiter.acquire()
 
+            # Add jitter: random delay to break predictable patterns
+            jitter = random.uniform(2.0, 6.0)
+            await asyncio.sleep(jitter)
+
             # trafilatura is blocking, so run in thread pool
             loop = asyncio.get_event_loop()
             content = await loop.run_in_executor(
@@ -70,10 +75,20 @@ class ContentExtractorService:
             print(f"Content extraction failed for {url}: {e}")
             return None
 
+    # Browser fingerprints to rotate through (curl_cffi supported versions)
+    BROWSER_FINGERPRINTS = [
+        "chrome110",
+        "chrome120",
+        "chrome124",
+        "safari15_5",
+        "safari17_0",
+    ]
+
     def _extract_sync(self, url: str) -> Optional[str]:
         """
         Synchronous content extraction (runs in thread pool).
         Uses custom headers to mimic browser requests.
+        Falls back to trafilatura's built-in fetcher if curl_cffi fails.
         """
         try:
             # Build headers with proper Referer for the domain
@@ -84,25 +99,40 @@ class ContentExtractorService:
                 "Accept-Language": "en-US,en;q=0.9",
             }
 
-            # Use requests with browser-like headers instead of trafilatura.fetch_url
-            response = crequests.get(
-                url,
-                headers=headers,
-                timeout=15,
-                allow_redirects=True,
-                impersonate="chrome120"  # <--- THE MAGIC SAUCE
-            )
+            # Rotate browser fingerprint to avoid detection
+            browser = random.choice(self.BROWSER_FINGERPRINTS)
 
-            if response.status_code != 200:
-                print(f"HTTP {response.status_code} for {url}")
-                # Optional: specific handling for 403 (Blocked)
-                if response.status_code == 403:
-                    print("Request was blocked by anti-bot protection.")
-                return None
+            downloaded = None
 
-            downloaded = response.text
+            # Try curl_cffi first (browser impersonation)
+            try:
+                response = crequests.get(
+                    url,
+                    headers=headers,
+                    timeout=30,  # Increased timeout for servers
+                    allow_redirects=True,
+                    impersonate=browser
+                )
+
+                if response.status_code == 200:
+                    downloaded = response.text
+                else:
+                    print(f"[curl_cffi] HTTP {response.status_code} for {url}")
+                    if response.status_code == 403:
+                        print("[curl_cffi] Blocked by anti-bot protection, trying fallback...")
+
+            except Exception as curl_error:
+                print(f"[curl_cffi] Failed for {url}: {type(curl_error).__name__}: {curl_error}")
+
+            # Fallback: Use trafilatura's built-in fetcher
             if not downloaded:
-                return None
+                print(f"[fallback] Trying trafilatura.fetch_url for {url}")
+                downloaded = trafilatura.fetch_url(url)
+                if downloaded:
+                    print(f"[fallback] Successfully fetched {url}")
+                else:
+                    print(f"[fallback] trafilatura.fetch_url also failed for {url}")
+                    return None
 
             # Extract main content
             content = trafilatura.extract(
@@ -113,16 +143,21 @@ class ContentExtractorService:
                 favor_precision=True,
             )
 
+            if content:
+                print(f"[extract] Successfully extracted content from {url} ({len(content)} chars)")
+            else:
+                print(f"[extract] trafilatura.extract returned None for {url}")
+
             return content
 
         except requests.exceptions.Timeout:
-            print(f"Timeout fetching {url}")
+            print(f"[error] Timeout fetching {url}")
             return None
         except requests.exceptions.RequestException as e:
-            print(f"Request error for {url}: {e}")
+            print(f"[error] Request error for {url}: {e}")
             return None
         except Exception as e:
-            print(f"Extraction error: {e}")
+            print(f"[error] Extraction error for {url}: {type(e).__name__}: {e}")
             return None
 
     async def extract_for_article(self, article: Article) -> Article:

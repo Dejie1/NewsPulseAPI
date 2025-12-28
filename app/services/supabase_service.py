@@ -150,8 +150,12 @@ class SupabaseService:
                 "image_url": article.image,  # image -> image_url
                 "published_at": article.published_at.isoformat() if article.published_at else None,
                 "category": article.category,  # Category from feed source
-                "full_content": article.content,  # Full scraped content
             }
+
+            # Only include full_content if it's not None
+            # This prevents overwriting existing content with NULL on re-sync
+            if article.content is not None:
+                row["full_content"] = article.content
 
             if source_id:
                 row["source_id"] = source_id
