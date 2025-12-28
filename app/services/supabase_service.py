@@ -131,11 +131,34 @@ class SupabaseService:
         - description -> summary
         - image -> image_url
         - source -> looked up in sources table
+
+        Preserves existing full_content if new content is None.
         """
         if not articles:
             return {"inserted": 0, "errors": [], "message": "No articles to sync"}
 
         results = {"inserted": 0, "errors": [], "total": len(articles)}
+
+        # Fetch existing content for all URLs to preserve during upsert
+        # This prevents overwriting existing full_content with NULL
+        urls = [article.link for article in articles]
+        existing_content: dict[str, str] = {}
+
+        try:
+            # Batch fetch existing content (only fetch URLs that exist)
+            response = self.client.table("articles")\
+                .select("url, full_content")\
+                .in_("url", urls)\
+                .not_.is_("full_content", "null")\
+                .execute()
+
+            existing_content = {
+                row["url"]: row["full_content"]
+                for row in (response.data or [])
+            }
+            print(f"[upsert] Found {len(existing_content)} articles with existing content to preserve")
+        except Exception as e:
+            print(f"[upsert] Warning: Could not fetch existing content: {e}")
 
         # Process articles one by one to handle source lookups
         rows = []
@@ -152,10 +175,12 @@ class SupabaseService:
                 "category": article.category,  # Category from feed source
             }
 
-            # Only include full_content if it's not None
-            # This prevents overwriting existing content with NULL on re-sync
+            # Use new content if available, otherwise preserve existing content
             if article.content is not None:
                 row["full_content"] = article.content
+            elif article.link in existing_content:
+                row["full_content"] = existing_content[article.link]
+            # If neither, don't include full_content (will be NULL for new articles)
 
             if source_id:
                 row["source_id"] = source_id
@@ -164,12 +189,9 @@ class SupabaseService:
 
         try:
             # Upsert with conflict resolution on 'url'
-            # default_to_null=False prevents overwriting existing columns with NULL
-            # when those columns are not included in the payload
             response = self.client.table("articles").upsert(
                 rows,
-                on_conflict="url",
-                default_to_null=False
+                on_conflict="url"
             ).execute()
 
             results["inserted"] = len(response.data) if response.data else 0
@@ -460,8 +482,7 @@ class SupabaseService:
             # Upsert all mentions
             response = self.client.table("company_mentions").upsert(
                 deduped_mentions,
-                on_conflict="article_id,company_id",
-                default_to_null=False
+                on_conflict="article_id,company_id"
             ).execute()
 
             results["inserted"] = len(response.data) if response.data else 0
@@ -565,8 +586,7 @@ class SupabaseService:
         try:
             response = self.client.table("companies").upsert(
                 companies,
-                on_conflict="ticker",
-                default_to_null=False
+                on_conflict="ticker"
             ).execute()
 
             return {
@@ -613,7 +633,7 @@ class SupabaseService:
                 "company_id": company_id,
                 "avg_sentiment": avg_sentiment,
                 "article_volume": len(mentions)
-            }, on_conflict="date,company_id", default_to_null=False).execute()
+            }, on_conflict="date,company_id").execute()
 
             return True
 
