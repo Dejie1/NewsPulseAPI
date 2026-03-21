@@ -95,6 +95,15 @@ class RSSParserService:
             # Get image
             image = self._get_image(entry)
 
+            # Extract full content from RSS if feed provides it
+            content = None
+            content_extracted = False
+            if source.full_content_in_feed:
+                raw_content = self._get_full_content(entry)
+                if raw_content:
+                    content = raw_content
+                    content_extracted = True
+
             return Article(
                 title=title,
                 link=link,
@@ -102,7 +111,9 @@ class RSSParserService:
                 published_at=published_at,
                 description=description,
                 image=image,
-                category=source.category
+                category=source.category,
+                content=content,
+                content_extracted=content_extracted
             )
 
         except Exception:
@@ -186,6 +197,30 @@ class RSSParserService:
                 return image.get("href") or image.get("url")
             if isinstance(image, str):
                 return image
+
+        return None
+
+    def _get_full_content(self, entry: dict) -> Optional[str]:
+        """
+        Extract full article content from RSS entry (no truncation).
+        Used for feeds that embed the complete article in the RSS description.
+        """
+        # Try summary first (feedparser often puts description content here)
+        summary = entry.get("summary", "").strip()
+        if summary and len(summary) > 500:
+            return self._clean_html(summary)
+
+        # Try description
+        description = entry.get("description", "").strip()
+        if description and len(description) > 500:
+            return self._clean_html(description)
+
+        # Try content
+        content = entry.get("content", [])
+        if content and isinstance(content, list):
+            first_content = content[0].get("value", "")
+            if first_content and len(first_content) > 500:
+                return self._clean_html(first_content)
 
         return None
 

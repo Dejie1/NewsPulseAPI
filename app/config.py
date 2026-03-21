@@ -38,19 +38,52 @@ settings = Settings()
 # Feed source configuration
 FEED_SOURCES: list[FeedSource] = [
     FeedSource(
-        name="NYTimes Technology",
-        url="https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+        name="Ars Technica",
+        url="https://feeds.arstechnica.com/arstechnica/index",
         category="technology"
-    ),
-    FeedSource(
-        name="Wired Business",
-        url="https://www.wired.com/feed/category/business/latest/rss",
-        category="business"
     ),
     FeedSource(
         name="Wired Culture",
         url="https://www.wired.com/feed/category/culture/latest/rss",
         category="culture"
+    ),
+    FeedSource(
+        name="Fast Company",
+        url="https://www.fastcompany.com/latest/rss",
+        category="technology",
+        full_content_in_feed=True
+    ),
+    FeedSource(
+        name="The Edge Malaysia",
+        url="https://news.google.com/rss/search?q=https%3A%2F%2Ftheedgemalaysia.com%2F&hl=en-MY&gl=MY&ceid=MY%3Aen",
+        category="news"
+    ),
+    FeedSource(
+        name="Free Malaysia Today",
+        url="https://cms.freemalaysiatoday.com/feed",
+        category="news",
+        full_content_in_feed=True
+    ),
+    FeedSource(
+        name="Reuters",
+        url="https://news.google.com/rss/search?q=site%3Areuters.com&hl=en-US&gl=US&ceid=US%3Aen",
+        category="news"
+    ),
+    FeedSource(
+        name="Bloomberg",
+        url="https://news.google.com/rss/search?q=site%3Abloomberg.com&hl=en-US&gl=US&ceid=US%3Aen",
+        category="business"
+    ),
+    FeedSource(
+        name="The Verge",
+        url="https://www.theverge.com/rss/index.xml",
+        category="technology"
+    ),
+    FeedSource(
+        name="SoyaCincau",
+        url="https://soyacincau.com/feed/",
+        category="technology",
+        full_content_in_feed=True
     ),
 ]
 

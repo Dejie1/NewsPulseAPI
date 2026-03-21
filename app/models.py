@@ -31,6 +31,7 @@ class FeedSource(BaseModel):
     name: str
     url: str
     category: Optional[str] = None
+    full_content_in_feed: bool = False  # If True, RSS description contains full article content
 
 
 class AggregationResult(BaseModel):
