@@ -1,0 +1,35 @@
+services:
+  aggregator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: news-aggregator
+    ports:
+      - "8000:8000"
+    environment:
+      - AGGREGATOR_DEBUG=false
+      - AGGREGATOR_CACHE_TTL_SECONDS=300
+      - AGGREGATOR_REQUESTS_PER_SECOND=2.0
+      - AGGREGATOR_REQUEST_TIMEOUT_SECONDS=10
+      - AGGREGATOR_MAX_ARTICLES_PER_FEED=50
+      - AGGREGATOR_MAX_TOTAL_ARTICLES=200
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/news/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
