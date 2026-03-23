@@ -4,7 +4,7 @@ Orchestrates fetching from multiple sources, deduplication, and caching.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.models import Article, FeedSource, AggregationResult, AggregationStatus
@@ -103,6 +103,14 @@ class AggregatorService:
 
         # Deduplicate
         unique_articles = self.deduplicator.deduplicate(all_articles)
+
+        # Normalize to UTC so mixed feed date formats never break sorting
+        for article in unique_articles:
+            published_at = article.published_at
+            if published_at.tzinfo is None or published_at.tzinfo.utcoffset(published_at) is None:
+                article.published_at = published_at.replace(tzinfo=timezone.utc)
+            else:
+                article.published_at = published_at.astimezone(timezone.utc)
 
         # Sort by published date (newest first)
         unique_articles.sort(key=lambda a: a.published_at, reverse=True)

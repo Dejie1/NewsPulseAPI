@@ -4,7 +4,7 @@ Handles fetching and parsing individual RSS feeds.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 import feedparser
 import httpx
@@ -125,6 +125,11 @@ class RSSParserService:
         Parse publication date from entry.
         Handles multiple date field names and formats.
         """
+        def to_utc(dt: datetime) -> datetime:
+            if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+
         date_fields = ["published", "pubDate", "updated", "created"]
 
         for field in date_fields:
@@ -132,15 +137,15 @@ class RSSParserService:
             if date_str:
                 try:
                     if isinstance(date_str, str):
-                        return date_parser.parse(date_str)
+                        return to_utc(date_parser.parse(date_str))
                     # feedparser sometimes returns time.struct_time
                     if hasattr(date_str, "tm_year"):
-                        return datetime(*date_str[:6])
+                        return to_utc(datetime(*date_str[:6]))
                 except Exception:
                     continue
 
         # Fallback to current time if no date found
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
 
     def _get_description(self, entry: dict) -> Optional[str]:
         """
