@@ -32,6 +32,7 @@ class FeedSource(BaseModel):
     url: str
     category: Optional[str] = None
     full_content_in_feed: bool = False  # If True, RSS description contains full article content
+    is_sitemap: bool = False  # If True, URL points to a news sitemap instead of RSS
 
 
 class AggregationResult(BaseModel):
