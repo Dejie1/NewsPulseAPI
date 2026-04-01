@@ -203,6 +203,60 @@ class RSSParserService:
             if isinstance(image, str):
                 return image
 
+        # Fallback: some feeds embed thumbnails only in HTML snippets.
+        html_candidates: list[str] = []
+        content = entry.get("content", [])
+        if content and isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict):
+                    value = item.get("value")
+                    if isinstance(value, str) and value.strip():
+                        html_candidates.append(value)
+
+        summary = entry.get("summary")
+        description = entry.get("description")
+        if isinstance(summary, str) and summary.strip():
+            html_candidates.append(summary)
+        if isinstance(description, str) and description.strip():
+            html_candidates.append(description)
+
+        for html_text in html_candidates:
+            image_url = self._extract_image_from_html(html_text)
+            if image_url:
+                return image_url
+
+        return None
+
+    def _extract_image_from_html(self, html_text: str) -> Optional[str]:
+        """Extract the first image URL from an HTML snippet."""
+        import re
+
+        if not html_text:
+            return None
+
+        # Prefer src / data-src, then fall back to the first srcset candidate.
+        patterns = [
+            r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']',
+            r'<img[^>]+srcset=["\']([^"\']+)["\']',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, html_text, flags=re.IGNORECASE)
+            if not match:
+                continue
+
+            url = match.group(1).strip()
+            if not url:
+                continue
+
+            if " " in url:
+                # srcset format: "url 320w, url2 640w"
+                url = url.split(",", 1)[0].split(" ", 1)[0].strip()
+
+            if url.startswith("//"):
+                return f"https:{url}"
+            return url
+
         return None
 
     def _get_full_content(self, entry: dict) -> Optional[str]:
