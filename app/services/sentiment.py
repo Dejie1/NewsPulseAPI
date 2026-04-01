@@ -134,8 +134,6 @@ class SentimentAnalyzer:
                 label="neutral",
             )
 
-        # Truncate to model max length
-        text = text[:512]
         results = self._pipeline(text)
 
         # results is [[{'label': ..., 'score': ...}, ...]] when top_k=None
@@ -174,7 +172,7 @@ class SentimentAnalyzer:
         for i, text in enumerate(texts):
             if text and text.strip():
                 index_map[len(processed)] = i
-                processed.append(text[:512])
+                processed.append(text)
 
         if not processed:
             return [
