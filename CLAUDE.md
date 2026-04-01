@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A FastAPI-based RSS news aggregator service designed for React Native apps. Aggregates news from multiple RSS sources, provides sentiment analysis (VADER + FinBERT), article summarization, recommendations, company entity recognition (Magnificent 7 tracking), and syncs to Supabase.
+A FastAPI-based RSS news aggregator service designed for React Native apps. Aggregates news from multiple RSS sources, provides sentiment analysis (RoBERTa + FinBERT), article summarization, recommendations, company entity recognition (Magnificent 7 tracking), and syncs to Supabase.
 
 ## Development Commands
 
@@ -62,7 +62,7 @@ API docs available at `http://localhost:8000/docs` after starting the server.
 ### Key Patterns
 
 1. **Singleton Services**: Module-level singletons via getter functions (`get_aggregator()`, `get_cache()`, etc.)
-2. **Lazy Model Loading**: Heavy ML models (NLTK, GLiNER, FinBERT) load only on first use. First requests are slow (~30-60s).
+2. **Lazy Model Loading**: Heavy ML models (RoBERTa, GLiNER, FinBERT) load only on first use. First requests are slow (~30-60s).
 3. **Background Tasks**: FastAPI BackgroundTasks for async operations
 4. **Cache-First**: GET `/api/news/` returns cached data; POST `/api/news/aggregate` forces refresh
 
