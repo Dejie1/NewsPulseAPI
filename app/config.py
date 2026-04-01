@@ -64,16 +64,17 @@ FEED_SOURCES: list[FeedSource] = [
         category="news",
         full_content_in_feed=True
     ),
-    FeedSource(
-        name="Reuters",
-        url="https://news.google.com/rss/search?q=site%3Areuters.com&hl=en-US&gl=US&ceid=US%3Aen",
-        category="news"
-    ),
-    FeedSource(
-        name="Bloomberg",
-        url="https://news.google.com/rss/search?q=site%3Abloomberg.com&hl=en-US&gl=US&ceid=US%3Aen",
-        category="business"
-    ),
+    # FeedSource(
+    #     name="Reuters",
+    #     url="https://www.reuters.com/arc/outboundfeeds/news-sitemap/?outputType=xml",
+    #     category="news",
+    #     is_sitemap=True
+    # ),
+    # FeedSource(
+    #     name="Bloomberg",
+    #     url="https://news.google.com/rss/search?q=site%3Abloomberg.com&hl=en-US&gl=US&ceid=US%3Aen",
+    #     category="business"
+    # ),
     FeedSource(
         name="The Verge",
         url="https://www.theverge.com/rss/index.xml",

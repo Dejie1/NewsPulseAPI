@@ -15,6 +15,41 @@ from app.config import settings
 from app.utils.rate_limiter import get_rate_limiter
 
 
+# Mapping of common RSS tag terms to normalized categories.
+# Keys are lowercase. Add entries as new feeds introduce new terms.
+CATEGORY_MAP: dict[str, str] = {
+    # Technology
+    "tech": "technology", "technology": "technology", "gadgets": "technology",
+    "software": "technology", "hardware": "technology", "apps": "technology",
+    "ai": "technology", "artificial intelligence": "technology",
+    "cybersecurity": "technology", "security": "technology",
+    "mobile": "technology", "smartphones": "technology", "computing": "technology",
+    "internet": "technology", "it": "technology", "programming": "technology",
+    "developer": "technology", "cloud": "technology", "robotics": "technology",
+    "tech policy": "technology",
+    # Science
+    "science": "science", "space": "science", "environment": "science",
+    "health": "science", "medicine": "science", "biology": "science",
+    "physics": "science", "climate": "science", "research": "science",
+    # Culture & Entertainment
+    "culture": "culture", "entertainment": "culture", "gaming": "culture",
+    "games": "culture", "movies": "culture", "music": "culture",
+    "lifestyle": "culture", "food": "culture", "arts": "culture",
+    "tv": "culture", "streaming": "culture", "social media": "culture",
+    "features": "culture",
+    # Business & Finance
+    "business": "business", "finance": "business", "economy": "business",
+    "markets": "business", "startups": "business", "venture capital": "business",
+    "cryptocurrency": "business", "crypto": "business",
+    # News & Politics
+    "news": "news", "politics": "news", "policy": "news",
+    "world": "news", "law": "news", "government": "news",
+    # Cars & Automotive
+    "cars": "cars", "automotive": "cars", "ev": "cars",
+    "electric vehicles": "cars", "transportation": "cars",
+}
+
+
 class RSSParserService:
     """
     Service for fetching and parsing RSS feeds.
@@ -27,10 +62,13 @@ class RSSParserService:
 
     async def fetch_feed(self, source: FeedSource) -> tuple[list[Article], Optional[str]]:
         """
-        Fetch and parse a single RSS feed.
+        Fetch and parse a single RSS feed or news sitemap.
         Returns a tuple of (articles, error_message).
         Error message is None if successful.
         """
+        if source.is_sitemap:
+            return await self._fetch_sitemap(source)
+
         try:
             # Rate limit before making request
             await self.rate_limiter.acquire()
@@ -70,6 +108,95 @@ class RSSParserService:
         except Exception as e:
             return [], f"Error fetching {source.name}: {str(e)}"
 
+    async def _fetch_sitemap(self, source: FeedSource) -> tuple[list[Article], Optional[str]]:
+        """
+        Fetch and parse a news sitemap (e.g. Reuters).
+        News sitemaps use the sitemap + news:news XML namespace.
+        Uses curl_cffi for fetching to bypass potential blocks.
+        """
+        try:
+            await self.rate_limiter.acquire()
+
+            from lxml import etree
+            from curl_cffi import requests as crequests
+
+            response = crequests.get(
+                source.url,
+                impersonate="chrome120",
+                timeout=30,
+            )
+            if response.status_code != 200:
+                return [], f"HTTP {response.status_code} fetching sitemap for {source.name}"
+            content = response.content  # bytes for lxml
+
+            root = etree.fromstring(content)
+            ns = {
+                "sm": "http://www.sitemaps.org/schemas/sitemap/0.9",
+                "news": "http://www.google.com/schemas/sitemap-news/0.9",
+                "image": "http://www.google.com/schemas/sitemap-image/1.1",
+            }
+
+            articles = []
+            for url_elem in root.findall("sm:url", ns)[:settings.max_articles_per_feed]:
+                article = self._parse_sitemap_entry(url_elem, ns, source)
+                if article:
+                    articles.append(article)
+
+            return articles, None
+
+        except Exception as e:
+            return [], f"Error fetching sitemap {source.name}: {str(e)}"
+
+    def _parse_sitemap_entry(self, url_elem, ns: dict, source: FeedSource) -> Optional[Article]:
+        """Parse a single <url> entry from a news sitemap."""
+        try:
+            loc = url_elem.findtext("sm:loc", namespaces=ns)
+            if not loc:
+                return None
+
+            # Skip non-English articles (e.g. /es/, /pt/, /ja/ paths)
+            from urllib.parse import urlparse
+            path_parts = urlparse(loc).path.strip("/").split("/")
+            if path_parts and len(path_parts[0]) == 2 and path_parts[0].isalpha():
+                return None  # Likely a language prefix like /es/, /pt/
+
+            news_elem = url_elem.find("news:news", ns)
+            title = ""
+            published_at = None
+            if news_elem is not None:
+                title = news_elem.findtext("news:title", default="", namespaces=ns).strip()
+                pub_date = news_elem.findtext("news:publication_date", namespaces=ns)
+                if pub_date:
+                    try:
+                        published_at = date_parser.parse(pub_date)
+                        if published_at.tzinfo is None:
+                            published_at = published_at.replace(tzinfo=timezone.utc)
+                        else:
+                            published_at = published_at.astimezone(timezone.utc)
+                    except Exception:
+                        published_at = datetime.now(timezone.utc)
+
+            if not title:
+                return None
+
+            # Get image
+            image = None
+            image_elem = url_elem.find("image:image", ns)
+            if image_elem is not None:
+                image = image_elem.findtext("image:loc", namespaces=ns)
+
+            return Article(
+                title=title,
+                link=loc,
+                source=source.name,
+                published_at=published_at or datetime.now(timezone.utc),
+                description=None,
+                image=image,
+                category=source.category,
+            )
+        except Exception:
+            return None
+
     def _parse_entry(self, entry: dict, source: FeedSource) -> Optional[Article]:
         """
         Parse a single feed entry into an Article.
@@ -104,6 +231,8 @@ class RSSParserService:
                     content = raw_content
                     content_extracted = True
 
+            category = self._infer_category(entry, source)
+
             return Article(
                 title=title,
                 link=link,
@@ -111,7 +240,7 @@ class RSSParserService:
                 published_at=published_at,
                 description=description,
                 image=image,
-                category=source.category,
+                category=category,
                 content=content,
                 content_extracted=content_extracted
             )
@@ -119,6 +248,19 @@ class RSSParserService:
         except Exception:
             # Skip malformed entries
             return None
+
+    def _infer_category(self, entry: dict, source: FeedSource) -> str:
+        """
+        Infer article category from RSS entry tags/categories.
+        Falls back to the feed source's default category.
+        """
+        tags = entry.get("tags", [])
+        for tag in tags:
+            term = (tag.get("term") or "").strip().lower()
+            if term in CATEGORY_MAP:
+                return CATEGORY_MAP[term]
+        # No recognized tag found — use the source default
+        return source.category or "general"
 
     def _parse_date(self, entry: dict) -> datetime:
         """
