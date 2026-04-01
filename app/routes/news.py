@@ -296,12 +296,12 @@ async def analyze_article_sentiment(
     """
     Analyze sentiment of a single article.
 
-    Uses VADER (Valence Aware Dictionary and sEntiment Reasoner) which is
-    specifically designed for social media and news text.
+    Uses RoBERTa (cardiffnlp/twitter-roberta-base-sentiment-latest) for
+    sentiment analysis on news text.
 
     Returns:
-    - negative/neutral/positive: Proportion scores (0-1)
-    - compound: Normalized score (-1 to 1)
+    - negative/neutral/positive: Probability scores (0-1)
+    - compound: Synthetic score (-1 to 1): positive - negative
     - label: Overall sentiment classification
     """
     aggregator = get_aggregator()
