@@ -1,6 +1,6 @@
 """
-Sentiment analysis service using NLTK VADER.
-VADER is specifically designed for social media/news text.
+Sentiment analysis service using RoBERTa.
+Uses cardiffnlp/twitter-roberta-base-sentiment-latest for news text sentiment.
 """
 
 from typing import Optional
@@ -8,72 +8,101 @@ from pydantic import BaseModel
 
 
 class SentimentScores(BaseModel):
-    """Sentiment analysis scores from VADER."""
-    negative: float  # Proportion of negative sentiment (0-1)
-    neutral: float   # Proportion of neutral sentiment (0-1)
-    positive: float  # Proportion of positive sentiment (0-1)
-    compound: float  # Normalized compound score (-1 to 1)
+    """Sentiment analysis scores."""
+    negative: float  # Probability of negative sentiment (0-1)
+    neutral: float   # Probability of neutral sentiment (0-1)
+    positive: float  # Probability of positive sentiment (0-1)
+    compound: float  # Synthetic compound score (-1 to 1): positive_prob - negative_prob
     label: str       # "positive", "negative", or "neutral"
 
 
 class SentimentAnalyzer:
     """
-    Sentiment analyzer using NLTK's VADER.
+    Sentiment analyzer using RoBERTa (cardiffnlp/twitter-roberta-base-sentiment-latest).
 
-    VADER (Valence Aware Dictionary and sEntiment Reasoner) is specifically
-    attuned to sentiments expressed in social media and news articles.
-
-    It handles:
-    - Emoticons and emojis
-    - Slang and abbreviations
-    - Punctuation emphasis (e.g., "good!!!")
-    - Capitalization (e.g., "AMAZING")
-    - Degree modifiers (e.g., "very good", "kind of bad")
-    - Contrasting conjunctions (e.g., "good, but not great")
+    A RoBERTa-base model fine-tuned on ~124M tweets for sentiment analysis.
+    Outputs three-class probabilities (negative, neutral, positive).
     """
 
+    MODEL_NAME = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+
+    # Label mapping for this specific model
+    LABEL_MAP = {
+        "LABEL_0": "negative",
+        "LABEL_1": "neutral",
+        "LABEL_2": "positive",
+        # Some versions use text labels directly
+        "negative": "negative",
+        "neutral": "neutral",
+        "positive": "positive",
+    }
+
     def __init__(self):
-        self._analyzer = None
+        self._pipeline = None
         self._initialized = False
+        self._initialization_error: Optional[str] = None
 
     def _ensure_initialized(self):
-        """Lazy initialization - loads VADER lexicon from local file."""
+        """Lazy initialization - loads RoBERTa model on first use."""
         if self._initialized:
             return
 
-        import os
-        import nltk
+        if self._initialization_error:
+            return
 
-        # Add custom nltk_data paths
-        nltk_paths = [
-            '/home/www/nltk_data',
-            '/usr/share/nltk_data',
-            '/usr/local/share/nltk_data',
-            os.path.expanduser('~/nltk_data'),
-        ]
-        for path in nltk_paths:
-            if path not in nltk.data.path:
-                nltk.data.path.insert(0, path)
-
-        # Try to load VADER, download if not found (with SSL workaround)
         try:
-            from nltk.sentiment.vader import SentimentIntensityAnalyzer
-            self._analyzer = SentimentIntensityAnalyzer()
-        except LookupError:
-            # Try downloading with SSL verification disabled
-            import ssl
-            try:
-                _create_unverified_https_context = ssl._create_unverified_context
-            except AttributeError:
-                pass
-            else:
-                ssl._default_https_context = _create_unverified_https_context
+            from transformers import pipeline
+            import torch
 
-            nltk.download('vader_lexicon', quiet=True)
-            from nltk.sentiment.vader import SentimentIntensityAnalyzer
-            self._analyzer = SentimentIntensityAnalyzer()
+            device = 0 if torch.cuda.is_available() else -1
+            print(f"Loading RoBERTa sentiment model: {self.MODEL_NAME}")
 
-        self._initialized = True
+            self._pipeline = pipeline(
+                "sentiment-analysis",
+                model=self.MODEL_NAME,
+                device=device,
+                max_length=512,
+                truncation=True,
+                top_k=None,  # Get all class probabilities
+            )
+
+            self._initialized = True
+            device_name = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"RoBERTa sentiment model loaded on {device_name}")
+
+        except Exception as e:
+            self._initialization_error = str(e)
+            print(f"Failed to initialize RoBERTa sentiment model: {e}")
+
+    def _parse_scores(self, results: list[dict]) -> SentimentScores:
+        """Parse pipeline output into SentimentScores."""
+        scores = {}
+        for r in results:
+            label = self.LABEL_MAP.get(r["label"], r["label"].lower())
+            scores[label] = r["score"]
+
+        negative = scores.get("negative", 0.0)
+        neutral = scores.get("neutral", 0.0)
+        positive = scores.get("positive", 0.0)
+
+        # Synthetic compound: positive - negative, range [-1, 1]
+        compound = positive - negative
+
+        # Label is the highest probability class
+        if positive >= negative and positive >= neutral:
+            label = "positive"
+        elif negative >= positive and negative >= neutral:
+            label = "negative"
+        else:
+            label = "neutral"
+
+        return SentimentScores(
+            negative=negative,
+            neutral=neutral,
+            positive=positive,
+            compound=compound,
+            label=label,
+        )
 
     def analyze(self, text: str) -> SentimentScores:
         """
@@ -93,33 +122,28 @@ class SentimentAnalyzer:
                 neutral=1.0,
                 positive=0.0,
                 compound=0.0,
-                label="neutral"
+                label="neutral",
             )
 
-        # Get VADER scores
-        scores = self._analyzer.polarity_scores(text)
+        if not self._initialized:
+            return SentimentScores(
+                negative=0.0,
+                neutral=1.0,
+                positive=0.0,
+                compound=0.0,
+                label="neutral",
+            )
 
-        # Determine label based on compound score
-        # Standard VADER thresholds
-        compound = scores['compound']
-        if compound >= 0.05:
-            label = "positive"
-        elif compound <= -0.05:
-            label = "negative"
-        else:
-            label = "neutral"
+        # Truncate to model max length
+        text = text[:512]
+        results = self._pipeline(text)
 
-        return SentimentScores(
-            negative=scores['neg'],
-            neutral=scores['neu'],
-            positive=scores['pos'],
-            compound=compound,
-            label=label
-        )
+        # results is [[{'label': ..., 'score': ...}, ...]] when top_k=None
+        return self._parse_scores(results[0] if results else [])
 
     def analyze_batch(self, texts: list[str]) -> list[SentimentScores]:
         """
-        Analyze sentiment for multiple texts.
+        Analyze sentiment for multiple texts using batch inference.
 
         Args:
             texts: List of texts to analyze
@@ -127,12 +151,67 @@ class SentimentAnalyzer:
         Returns:
             List of SentimentScores
         """
-        return [self.analyze(text) for text in texts]
+        self._ensure_initialized()
+
+        if not texts:
+            return []
+
+        if not self._initialized:
+            return [
+                SentimentScores(
+                    negative=0.0,
+                    neutral=1.0,
+                    positive=0.0,
+                    compound=0.0,
+                    label="neutral",
+                )
+                for _ in texts
+            ]
+
+        # Filter empty texts, track indices
+        processed = []
+        index_map = {}
+        for i, text in enumerate(texts):
+            if text and text.strip():
+                index_map[len(processed)] = i
+                processed.append(text[:512])
+
+        if not processed:
+            return [
+                SentimentScores(
+                    negative=0.0,
+                    neutral=1.0,
+                    positive=0.0,
+                    compound=0.0,
+                    label="neutral",
+                )
+                for _ in texts
+            ]
+
+        # Batch inference
+        batch_results = self._pipeline(processed)
+
+        # Build results, inserting neutral for empty texts
+        all_scores = [
+            SentimentScores(
+                negative=0.0,
+                neutral=1.0,
+                positive=0.0,
+                compound=0.0,
+                label="neutral",
+            )
+            for _ in texts
+        ]
+
+        for proc_idx, result in enumerate(batch_results):
+            orig_idx = index_map[proc_idx]
+            all_scores[orig_idx] = self._parse_scores(result)
+
+        return all_scores
 
     def get_average_sentiment(self, texts: list[str]) -> SentimentScores:
         """
         Get average sentiment across multiple texts.
-        Useful for analyzing overall sentiment of a news source.
 
         Args:
             texts: List of texts to analyze
@@ -146,7 +225,7 @@ class SentimentAnalyzer:
                 neutral=1.0,
                 positive=0.0,
                 compound=0.0,
-                label="neutral"
+                label="neutral",
             )
 
         scores = self.analyze_batch(texts)
@@ -157,7 +236,6 @@ class SentimentAnalyzer:
         avg_pos = sum(s.positive for s in scores) / n
         avg_compound = sum(s.compound for s in scores) / n
 
-        # Determine label
         if avg_compound >= 0.05:
             label = "positive"
         elif avg_compound <= -0.05:
@@ -170,7 +248,7 @@ class SentimentAnalyzer:
             neutral=avg_neu,
             positive=avg_pos,
             compound=avg_compound,
-            label=label
+            label=label,
         )
 
 
