@@ -4,11 +4,14 @@ Handles fetching and parsing individual RSS feeds.
 """
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 import feedparser
 import httpx
 from dateutil import parser as date_parser
+
+logger = logging.getLogger(__name__)
 
 from app.models import Article, FeedSource
 from app.config import settings
@@ -99,6 +102,10 @@ class RSSParserService:
                 if article:
                     articles.append(article)
 
+            # Resolve Google News redirect URLs to actual article URLs
+            if articles and "news.google.com" in source.url:
+                articles = await self._resolve_google_news_urls(articles)
+
             return articles, None
 
         except httpx.TimeoutException:
@@ -146,6 +153,34 @@ class RSSParserService:
 
         except Exception as e:
             return [], f"Error fetching sitemap {source.name}: {str(e)}"
+
+    async def _resolve_google_news_urls(self, articles: list[Article]) -> list[Article]:
+        """
+        Resolve Google News redirect URLs to actual article URLs.
+        Google News RSS feeds use redirect URLs (news.google.com/rss/articles/...)
+        that need to be decoded to get the real article URL.
+        """
+        from googlenewsdecoder import new_decoderv1
+
+        google_articles = [a for a in articles if "news.google.com/" in a.link]
+        if not google_articles:
+            return articles
+
+        resolved_count = 0
+        for article in google_articles:
+            try:
+                result = await asyncio.to_thread(new_decoderv1, article.link)
+                if result.get("status") and result.get("decoded_url"):
+                    article.link = result["decoded_url"]
+                    resolved_count += 1
+            except Exception:
+                pass  # Keep original Google News URL if decoding fails
+
+        logger.info(
+            "Resolved %d/%d Google News URLs to actual article URLs",
+            resolved_count, len(google_articles)
+        )
+        return articles
 
     def _parse_sitemap_entry(self, url_elem, ns: dict, source: FeedSource) -> Optional[Article]:
         """Parse a single <url> entry from a news sitemap."""
