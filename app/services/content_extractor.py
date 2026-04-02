@@ -81,6 +81,16 @@ class ContentExtractorService:
         Returns:
             Extracted text content, or None if extraction failed
         """
+        result = await self._extract(url)
+        return result["content"]
+
+    async def _extract(self, url: str) -> dict:
+        """
+        Extract content and metadata from a URL.
+
+        Returns:
+            Dict with 'content' (str|None) and 'image' (str|None)
+        """
         try:
             await self.rate_limiter.acquire()
 
@@ -90,16 +100,16 @@ class ContentExtractorService:
 
             # trafilatura is blocking, so run in thread pool
             loop = asyncio.get_event_loop()
-            content = await loop.run_in_executor(
+            result = await loop.run_in_executor(
                 self._executor,
                 self._extract_sync,
                 url
             )
-            return content
+            return result
 
         except Exception as e:
             logger.error("Content extraction failed for %s: %s", url, e)
-            return None
+            return {"content": None, "image": None}
 
     # Browser fingerprints to rotate through (curl_cffi supported versions)
     BROWSER_FINGERPRINTS = [
@@ -142,11 +152,29 @@ class ContentExtractorService:
             logger.error("[browser] Failed for %s: %s: %s", url, type(e).__name__, e)
             return None
 
-    def _extract_sync(self, url: str) -> Optional[str]:
+    @staticmethod
+    def _extract_og_image(html: str) -> Optional[str]:
+        """Extract og:image URL from HTML."""
+        import re
+        # Handle both attribute orders: property then content, or content then property
+        patterns = [
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return None
+
+    def _extract_sync(self, url: str) -> dict:
         """
         Synchronous content extraction (runs in thread pool).
         For browser-required domains (e.g. reuters.com), goes straight to StealthyFetcher.
         Otherwise tries curl_cffi → trafilatura → StealthyFetcher as fallback chain.
+
+        Returns:
+            Dict with 'content' (str|None) and 'image' (str|None)
         """
         try:
             parsed = urlparse(url)
@@ -159,7 +187,7 @@ class ContentExtractorService:
                 logger.info("[router] %s requires browser — skipping curl_cffi/trafilatura", parsed.netloc)
                 downloaded = self._fetch_with_browser(url)
                 if not downloaded:
-                    return None
+                    return {"content": None, "image": None}
             else:
                 # Build headers with proper Referer for the domain
                 headers = {
@@ -203,7 +231,10 @@ class ContentExtractorService:
                     downloaded = self._fetch_with_browser(url)
                     if not downloaded:
                         logger.error("[fallback] All fetchers failed for %s", url)
-                        return None
+                        return {"content": None, "image": None}
+
+            # Extract og:image before trafilatura strips the HTML
+            image = self._extract_og_image(downloaded)
 
             # Extract main content from HTML
             content = trafilatura.extract(
@@ -251,17 +282,17 @@ class ContentExtractorService:
             else:
                 logger.warning("[extract] trafilatura.extract returned None for %s", url)
 
-            return content
+            return {"content": content, "image": image}
 
         except requests.exceptions.Timeout:
             logger.error("[error] Timeout fetching %s", url)
-            return None
+            return {"content": None, "image": None}
         except requests.exceptions.RequestException as e:
             logger.error("[error] Request error for %s: %s", url, e)
-            return None
+            return {"content": None, "image": None}
         except Exception as e:
             logger.error("[error] Extraction error for %s: %s: %s", url, type(e).__name__, e)
-            return None
+            return {"content": None, "image": None}
 
     async def extract_for_article(self, article: Article) -> Article:
         """
@@ -271,12 +302,15 @@ class ContentExtractorService:
             article: Article to extract content for
 
         Returns:
-            Updated Article with content field populated
+            Updated Article with content and image fields populated
         """
         if article.content_extracted:
             return article
 
-        content = await self.extract_content(article.link)
+        result = await self._extract(article.link)
+
+        # Use extracted og:image if article has no image from RSS
+        image = article.image or result["image"]
 
         # Create new article with content
         return Article(
@@ -285,9 +319,9 @@ class ContentExtractorService:
             source=article.source,
             published_at=article.published_at,
             description=article.description,
-            image=article.image,
+            image=image,
             category=article.category,
-            content=content,
+            content=result["content"],
             content_extracted=True
         )
 
