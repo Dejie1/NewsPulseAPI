@@ -5,6 +5,7 @@ Falls back to Scrapling's StealthyFetcher (headful browser) for anti-bot protect
 """
 
 import asyncio
+import logging
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +14,8 @@ import trafilatura
 import requests
 from urllib.parse import urlparse
 from curl_cffi import requests as crequests  # Import the impersonating requests
+
+logger = logging.getLogger(__name__)
 
 from app.models import Article
 from app.utils.rate_limiter import RateLimiter
@@ -95,7 +98,7 @@ class ContentExtractorService:
             return content
 
         except Exception as e:
-            print(f"Content extraction failed for {url}: {e}")
+            logger.error("Content extraction failed for %s: %s", url, e)
             return None
 
     # Browser fingerprints to rotate through (curl_cffi supported versions)
@@ -117,7 +120,7 @@ class ContentExtractorService:
 
             headless = _get_headless_mode()
             mode_label = "virtual" if headless == "virtual" else ("headless" if headless else "headful")
-            print(f"[browser] Fetching {url} with StealthyFetcher ({mode_label} mode)...")
+            logger.info("[browser] Fetching %s with StealthyFetcher (%s mode)...", url, mode_label)
             page = StealthyFetcher.fetch(
                 url,
                 headless=headless,
@@ -129,14 +132,14 @@ class ContentExtractorService:
 
             html = page.html_content
             if html:
-                print(f"[browser] Successfully fetched {url} ({len(html)} chars of HTML)")
+                logger.info("[browser] Successfully fetched %s (%d chars of HTML)", url, len(html))
                 return html
             else:
-                print(f"[browser] StealthyFetcher returned empty content for {url}")
+                logger.warning("[browser] StealthyFetcher returned empty content for %s", url)
                 return None
 
         except Exception as e:
-            print(f"[browser] Failed for {url}: {type(e).__name__}: {e}")
+            logger.error("[browser] Failed for %s: %s: %s", url, type(e).__name__, e)
             return None
 
     def _extract_sync(self, url: str) -> Optional[str]:
@@ -153,7 +156,7 @@ class ContentExtractorService:
 
             if use_browser:
                 # Skip HTTP-based fetchers for known anti-bot domains
-                print(f"[router] {parsed.netloc} requires browser — skipping curl_cffi/trafilatura")
+                logger.info("[router] %s requires browser — skipping curl_cffi/trafilatura", parsed.netloc)
                 downloaded = self._fetch_with_browser(url)
                 if not downloaded:
                     return None
@@ -180,26 +183,26 @@ class ContentExtractorService:
                     if response.status_code == 200:
                         downloaded = response.text
                     else:
-                        print(f"[curl_cffi] HTTP {response.status_code} for {url}")
+                        logger.warning("[curl_cffi] HTTP %s for %s", response.status_code, url)
                         if response.status_code == 403:
-                            print("[curl_cffi] Blocked by anti-bot protection, trying fallback...")
+                            logger.warning("[curl_cffi] Blocked by anti-bot protection, trying fallback...")
 
                 except Exception as curl_error:
-                    print(f"[curl_cffi] Failed for {url}: {type(curl_error).__name__}: {curl_error}")
+                    logger.error("[curl_cffi] Failed for %s: %s: %s", url, type(curl_error).__name__, curl_error)
 
                 # Fallback 1: trafilatura's built-in fetcher
                 if not downloaded:
-                    print(f"[fallback] Trying trafilatura.fetch_url for {url}")
+                    logger.warning("[fallback] Trying trafilatura.fetch_url for %s", url)
                     downloaded = trafilatura.fetch_url(url)
                     if downloaded:
-                        print(f"[fallback] Successfully fetched {url}")
+                        logger.info("[fallback] Successfully fetched %s", url)
 
                 # Fallback 2: StealthyFetcher headful browser
                 if not downloaded:
-                    print(f"[fallback] HTTP fetchers failed, trying browser for {url}")
+                    logger.warning("[fallback] HTTP fetchers failed, trying browser for %s", url)
                     downloaded = self._fetch_with_browser(url)
                     if not downloaded:
-                        print(f"[fallback] All fetchers failed for {url}")
+                        logger.error("[fallback] All fetchers failed for %s", url)
                         return None
 
             # Extract main content from HTML
@@ -244,20 +247,20 @@ class ContentExtractorService:
                         content = "\n".join(lines[start:]).strip()
 
             if content:
-                print(f"[extract] Successfully extracted content from {url} ({len(content)} chars)")
+                logger.info("[extract] Successfully extracted content from %s (%d chars)", url, len(content))
             else:
-                print(f"[extract] trafilatura.extract returned None for {url}")
+                logger.warning("[extract] trafilatura.extract returned None for %s", url)
 
             return content
 
         except requests.exceptions.Timeout:
-            print(f"[error] Timeout fetching {url}")
+            logger.error("[error] Timeout fetching %s", url)
             return None
         except requests.exceptions.RequestException as e:
-            print(f"[error] Request error for {url}: {e}")
+            logger.error("[error] Request error for %s: %s", url, e)
             return None
         except Exception as e:
-            print(f"[error] Extraction error for {url}: {type(e).__name__}: {e}")
+            logger.error("[error] Extraction error for %s: %s: %s", url, type(e).__name__, e)
             return None
 
     async def extract_for_article(self, article: Article) -> Article:
@@ -287,6 +290,10 @@ class ContentExtractorService:
             content=content,
             content_extracted=True
         )
+
+    def shutdown(self) -> None:
+        """Shut down the thread pool executor."""
+        self._executor.shutdown(wait=False)
 
     async def extract_for_articles(
         self,

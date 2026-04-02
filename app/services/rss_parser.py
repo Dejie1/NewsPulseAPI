@@ -255,7 +255,11 @@ class RSSParserService:
         Falls back to the feed source's default category.
         """
         tags = entry.get("tags", [])
+        if not isinstance(tags, list):
+            return source.category or "general"
         for tag in tags:
+            if not isinstance(tag, dict):
+                continue
             term = (tag.get("term") or "").strip().lower()
             if term in CATEGORY_MAP:
                 return CATEGORY_MAP[term]

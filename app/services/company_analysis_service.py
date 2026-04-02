@@ -4,11 +4,14 @@ Detects Magnificent 7 mentions and analyzes financial sentiment for each.
 """
 
 import asyncio
+import logging
 from typing import Optional
 from pydantic import BaseModel
 
 from app.services.ner_service import get_ner_service, CompanyEntity
 from app.services.finbert_service import get_finbert_service
+
+logger = logging.getLogger(__name__)
 
 
 class CompanyMention(BaseModel):
@@ -200,7 +203,7 @@ class CompanyAnalysisService:
 
         for result in results:
             if isinstance(result, Exception):
-                print(f"Analysis error: {result}")
+                logger.error("Analysis error: %s", result)
                 continue
             all_records.extend(result)
 

@@ -3,8 +3,11 @@ FastAPI routes for the news aggregator.
 Provides endpoints for triggering aggregation and fetching articles.
 """
 
+import logging
 from typing import Optional
 from fastapi import APIRouter, Query, BackgroundTasks, HTTPException
+
+logger = logging.getLogger(__name__)
 
 from app.models import (
     Article,
@@ -125,7 +128,10 @@ async def trigger_aggregation_background(
 
     # Schedule background task
     async def run_aggregation():
-        await aggregator.aggregate(force_refresh=True)
+        try:
+            await aggregator.aggregate(force_refresh=True)
+        except Exception as e:
+            logger.error("Background aggregation failed: %s", e, exc_info=True)
 
     background_tasks.add_task(run_aggregation)
 
@@ -231,7 +237,10 @@ async def extract_content_batch(
     aggregator = get_aggregator()
 
     async def run_extraction():
-        await aggregator.extract_content_for_all(limit=limit)
+        try:
+            await aggregator.extract_content_for_all(limit=limit)
+        except Exception as e:
+            logger.error("Background content extraction failed: %s", e, exc_info=True)
 
     background_tasks.add_task(run_extraction)
 
@@ -861,14 +870,17 @@ async def analyze_companies_batch(
         }
 
     async def run_analysis():
-        from app.services.company_analysis_service import get_company_analyzer
-        analyzer = get_company_analyzer()
+        try:
+            from app.services.company_analysis_service import get_company_analyzer
+            analyzer = get_company_analyzer()
 
-        for article in articles_with_content:
-            try:
-                await analyzer.analyze_text(article.content)
-            except Exception as e:
-                print(f"Error analyzing {article.link}: {e}")
+            for article in articles_with_content:
+                try:
+                    await analyzer.analyze_text(article.content)
+                except Exception as e:
+                    logger.error("Error analyzing %s: %s", article.link, e)
+        except Exception as e:
+            logger.error("Background company analysis failed: %s", e, exc_info=True)
 
     background_tasks.add_task(run_analysis)
 
@@ -918,65 +930,68 @@ async def sync_company_mentions(
         )
 
     async def full_company_sync():
-        from app.services.company_analysis_service import get_company_analyzer
-        analyzer = get_company_analyzer()
+        try:
+            from app.services.company_analysis_service import get_company_analyzer
+            analyzer = get_company_analyzer()
 
-        # Get articles to analyze
-        articles = await supabase_service.get_articles_for_analysis(
-            limit=limit,
-            only_unanalyzed=not force_reanalyze
-        )
+            # Get articles to analyze
+            articles = await supabase_service.get_articles_for_analysis(
+                limit=limit,
+                only_unanalyzed=not force_reanalyze
+            )
 
-        if not articles:
-            print("No articles to analyze for company mentions")
-            return
+            if not articles:
+                logger.info("No articles to analyze for company mentions")
+                return
 
-        print(f"Analyzing {len(articles)} articles for company mentions")
+            logger.info("Analyzing %d articles for company mentions", len(articles))
 
-        all_mentions = []
-        for article in articles:
-            content = article.get("full_content")
-            if not content:
-                continue
+            all_mentions = []
+            for article in articles:
+                content = article.get("full_content")
+                if not content:
+                    continue
 
-            try:
-                mentions = await analyzer.analyze_text(content)
-
-                for mention in mentions:
-                    company_id = await supabase_service.get_company_by_ticker(
-                        mention.ticker
-                    )
-                    if company_id:
-                        all_mentions.append({
-                            "article_id": article["id"],
-                            "company_id": company_id,
-                            "sentiment_score": mention.sentiment_score,
-                            "confidence_score": mention.confidence_score,
-                            "context_sentence": mention.context_sentence[:500]
-                        })
-
-            except Exception as e:
-                print(f"Error analyzing article {article.get('id')}: {e}")
-
-        # Upsert to Supabase
-        if all_mentions:
-            result = await supabase_service.upsert_company_mentions(all_mentions)
-            print(f"Synced {result.get('inserted', 0)} company mentions")
-
-            # Update daily metrics for companies with mentions today
-            from datetime import datetime
-            today = datetime.utcnow().strftime("%Y-%m-%d")
-
-            company_ids_with_mentions = set(m["company_id"] for m in all_mentions)
-            for company_id in company_ids_with_mentions:
                 try:
-                    await supabase_service.update_daily_metrics(today, company_id)
-                except Exception as e:
-                    print(f"Error updating daily metrics for company {company_id}: {e}")
+                    mentions = await analyzer.analyze_text(content)
 
-            print(f"Updated daily metrics for {len(company_ids_with_mentions)} companies")
-        else:
-            print("No company mentions found to sync")
+                    for mention in mentions:
+                        company_id = await supabase_service.get_company_by_ticker(
+                            mention.ticker
+                        )
+                        if company_id:
+                            all_mentions.append({
+                                "article_id": article["id"],
+                                "company_id": company_id,
+                                "sentiment_score": mention.sentiment_score,
+                                "confidence_score": mention.confidence_score,
+                                "context_sentence": mention.context_sentence[:500]
+                            })
+
+                except Exception as e:
+                    logger.error("Error analyzing article %s: %s", article.get("id"), e)
+
+            # Upsert to Supabase
+            if all_mentions:
+                result = await supabase_service.upsert_company_mentions(all_mentions)
+                logger.info("Synced %d company mentions", result.get("inserted", 0))
+
+                # Update daily metrics for companies with mentions today
+                from datetime import datetime, timezone
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+                company_ids_with_mentions = set(m["company_id"] for m in all_mentions)
+                for company_id in company_ids_with_mentions:
+                    try:
+                        await supabase_service.update_daily_metrics(today, company_id)
+                    except Exception as e:
+                        logger.error("Error updating daily metrics for company %s: %s", company_id, e)
+
+                logger.info("Updated daily metrics for %d companies", len(company_ids_with_mentions))
+            else:
+                logger.info("No company mentions found to sync")
+        except Exception as e:
+            logger.error("Background company sync failed: %s", e, exc_info=True)
 
     background_tasks.add_task(full_company_sync)
 
@@ -1040,117 +1055,120 @@ async def sync_all_to_supabase(
         )
 
     async def full_sync():
-        aggregator = get_aggregator()
-        analyzer = get_sentiment_analyzer()
+        try:
+            aggregator = get_aggregator()
+            analyzer = get_sentiment_analyzer()
 
-        # 1. Fetch fresh articles from RSS
-        result = await aggregator.aggregate(force_refresh=force_refresh)
-        articles = result.articles
+            # 1. Fetch fresh articles from RSS
+            result = await aggregator.aggregate(force_refresh=force_refresh)
+            articles = result.articles
 
-        if not articles:
-            print("[sync] No articles fetched from RSS")
-            return
+            if not articles:
+                logger.info("[sync] No articles fetched from RSS")
+                return
 
-        print(f"[sync] Fetched {len(articles)} articles from RSS")
+            logger.info("[sync] Fetched %d articles from RSS", len(articles))
 
-        # 2. Get URLs that already have content in Supabase (skip re-extraction)
-        urls_with_content = await supabase_service.get_urls_with_content()
-        print(f"[sync] Found {len(urls_with_content)} articles with existing content in Supabase")
+            # 2. Get URLs that already have content in Supabase (skip re-extraction)
+            urls_with_content = await supabase_service.get_urls_with_content()
+            logger.info("[sync] Found %d articles with existing content in Supabase", len(urls_with_content))
 
-        # 3. Extract content ONLY for articles missing content
-        from app.services.content_extractor import get_content_extractor
-        content_extractor = get_content_extractor()
+            # 3. Extract content ONLY for articles missing content
+            from app.services.content_extractor import get_content_extractor
+            content_extractor = get_content_extractor()
 
-        articles_needing_content = [
-            a for a in articles
-            if a.link not in urls_with_content and not a.content_extracted
-        ][:60]  # Limit to avoid timeout
+            articles_needing_content = [
+                a for a in articles
+                if a.link not in urls_with_content and not a.content_extracted
+            ][:60]  # Limit to avoid timeout
 
-        print(f"[sync] Extracting content for {len(articles_needing_content)} new articles")
+            logger.info("[sync] Extracting content for %d new articles", len(articles_needing_content))
 
-        if articles_needing_content:
-            updated_articles = await content_extractor.extract_for_articles(
-                articles_needing_content,
-                max_concurrent=3
-            )
-            # Update cache with extracted content
-            for updated in updated_articles:
-                aggregator._update_article_in_cache(updated)
+            if articles_needing_content:
+                updated_articles = await content_extractor.extract_for_articles(
+                    articles_needing_content,
+                    max_concurrent=3
+                )
+                # Update cache with extracted content
+                for updated in updated_articles:
+                    aggregator._update_article_in_cache(updated)
 
-        # Refresh articles list with extracted content
-        articles = aggregator.get_cached_articles(limit=200)
+            # Refresh articles list with extracted content
+            articles = aggregator.get_cached_articles(limit=200)
 
-        # 4. Sync articles to Supabase (creates sources as needed)
-        await supabase_service.upsert_articles(articles)
-        print(f"[sync] Synced {len(articles)} articles to Supabase")
+            # 4. Sync articles to Supabase (creates sources as needed)
+            await supabase_service.upsert_articles(articles)
+            logger.info("[sync] Synced %d articles to Supabase", len(articles))
 
-        # 5. Analyze sentiments and update articles
-        sentiments = []
-        for article in articles:
-            text = article.content or article.description or article.title
-            scores = analyzer.analyze(text)
-            sentiments.append(SentimentResult(
-                article_title=article.title,
-                article_url=article.link,
-                negative=scores.negative,
-                neutral=scores.neutral,
-                positive=scores.positive,
-                compound=scores.compound,
-                label=scores.label
-            ))
-
-        # 6. Update overall_sentiment on articles
-        await supabase_service.upsert_sentiments(sentiments)
-
-        # 7. Analyze companies and sync mentions
-        if analyze_companies:
-            from app.services.company_analysis_service import get_company_analyzer
-            company_analyzer = get_company_analyzer()
-
-            all_mentions = []
+            # 5. Analyze sentiments and update articles
+            sentiments = []
             for article in articles:
-                if not article.content:
-                    continue
+                text = article.content or article.description or article.title
+                scores = analyzer.analyze(text)
+                sentiments.append(SentimentResult(
+                    article_title=article.title,
+                    article_url=article.link,
+                    negative=scores.negative,
+                    neutral=scores.neutral,
+                    positive=scores.positive,
+                    compound=scores.compound,
+                    label=scores.label
+                ))
 
-                article_id = await supabase_service.get_article_id_by_url(article.link)
-                if not article_id:
-                    continue
+            # 6. Update overall_sentiment on articles
+            await supabase_service.upsert_sentiments(sentiments)
 
-                try:
-                    mentions = await company_analyzer.analyze_text(article.content)
+            # 7. Analyze companies and sync mentions
+            if analyze_companies:
+                from app.services.company_analysis_service import get_company_analyzer
+                company_analyzer = get_company_analyzer()
 
-                    for mention in mentions:
-                        company_id = await supabase_service.get_company_by_ticker(
-                            mention.ticker
-                        )
-                        if company_id:
-                            all_mentions.append({
-                                "article_id": article_id,
-                                "company_id": company_id,
-                                "sentiment_score": mention.sentiment_score,
-                                "confidence_score": mention.confidence_score,
-                                "context_sentence": mention.context_sentence[:500]
-                            })
-                except Exception as e:
-                    print(f"Error analyzing companies for {article.link}: {e}")
+                all_mentions = []
+                for article in articles:
+                    if not article.content:
+                        continue
 
-            if all_mentions:
-                await supabase_service.upsert_company_mentions(all_mentions)
+                    article_id = await supabase_service.get_article_id_by_url(article.link)
+                    if not article_id:
+                        continue
 
-                # 8. Update daily metrics for companies with mentions today
-                from datetime import datetime
-                today = datetime.utcnow().strftime("%Y-%m-%d")
-
-                # Get unique company_ids from mentions
-                company_ids_with_mentions = set(m["company_id"] for m in all_mentions)
-
-                for company_id in company_ids_with_mentions:
                     try:
-                        await supabase_service.update_daily_metrics(today, company_id)
-                    except Exception as e:
-                        print(f"Error updating daily metrics for company {company_id}: {e}")
+                        mentions = await company_analyzer.analyze_text(article.content)
 
-                print(f"Updated daily metrics for {len(company_ids_with_mentions)} companies")
+                        for mention in mentions:
+                            company_id = await supabase_service.get_company_by_ticker(
+                                mention.ticker
+                            )
+                            if company_id:
+                                all_mentions.append({
+                                    "article_id": article_id,
+                                    "company_id": company_id,
+                                    "sentiment_score": mention.sentiment_score,
+                                    "confidence_score": mention.confidence_score,
+                                    "context_sentence": mention.context_sentence[:500]
+                                })
+                    except Exception as e:
+                        logger.error("Error analyzing companies for %s: %s", article.link, e)
+
+                if all_mentions:
+                    await supabase_service.upsert_company_mentions(all_mentions)
+
+                    # 8. Update daily metrics for companies with mentions today
+                    from datetime import datetime, timezone
+                    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+                    # Get unique company_ids from mentions
+                    company_ids_with_mentions = set(m["company_id"] for m in all_mentions)
+
+                    for company_id in company_ids_with_mentions:
+                        try:
+                            await supabase_service.update_daily_metrics(today, company_id)
+                        except Exception as e:
+                            logger.error("Error updating daily metrics for company %s: %s", company_id, e)
+
+                    logger.info("Updated daily metrics for %d companies", len(company_ids_with_mentions))
+        except Exception as e:
+            logger.error("Background full sync failed: %s", e, exc_info=True)
 
     background_tasks.add_task(full_sync)
 

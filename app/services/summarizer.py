@@ -4,11 +4,14 @@ Uses sumy library for proper extractive summarization.
 """
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from app.models import Article, SummarizationResponse
+
+logger = logging.getLogger(__name__)
 
 
 class BaseSummarizer(ABC):
@@ -88,6 +91,10 @@ class SumySummarizer(BaseSummarizer):
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._nltk_downloaded = False
 
+    def shutdown(self) -> None:
+        """Shut down the thread pool executor."""
+        self._executor.shutdown(wait=False)
+
     def _ensure_nltk_data(self):
         """Download required NLTK data if not present."""
         if self._nltk_downloaded:
@@ -150,7 +157,7 @@ class SumySummarizer(BaseSummarizer):
 
         except Exception as e:
             # Fallback to simple truncation if sumy fails
-            print(f"Sumy summarization failed: {e}")
+            logger.error("Sumy summarization failed: %s", e)
             words = text.split()
             return " ".join(words[:100]) + "..."
 
@@ -394,5 +401,5 @@ def configure_ai_summarizer(provider: str, api_key: str, **kwargs) -> None:
     #     service.set_summarizer(OllamaSummarizer(**kwargs))
 
     # For now, fall back to sumy
-    print(f"AI summarizer '{provider}' not configured. Using sumy-lsa instead.")
+    logger.info("AI summarizer '%s' not configured. Using sumy-lsa instead.", provider)
     service.set_summarizer(SumySummarizer(algorithm="lsa"))

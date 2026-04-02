@@ -3,8 +3,11 @@ Sentiment analysis service using RoBERTa.
 Uses cardiffnlp/twitter-roberta-base-sentiment-latest for news text sentiment.
 """
 
+import logging
 from typing import Optional
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class SentimentScores(BaseModel):
@@ -55,7 +58,7 @@ class SentimentAnalyzer:
             import torch
 
             device = 0 if torch.cuda.is_available() else -1
-            print(f"Loading RoBERTa sentiment model: {self.MODEL_NAME}")
+            logger.info("Loading RoBERTa sentiment model: %s", self.MODEL_NAME)
 
             self._pipeline = pipeline(
                 "sentiment-analysis",
@@ -68,11 +71,19 @@ class SentimentAnalyzer:
 
             self._initialized = True
             device_name = "cuda" if torch.cuda.is_available() else "cpu"
-            print(f"RoBERTa sentiment model loaded on {device_name}")
+            logger.info("RoBERTa sentiment model loaded on %s", device_name)
 
         except Exception as e:
             self._initialization_error = str(e)
-            print(f"Failed to initialize RoBERTa sentiment model: {e}")
+            logger.error("Failed to initialize RoBERTa sentiment model: %s", e)
+
+    def unload(self) -> None:
+        """Release the model from memory."""
+        if self._pipeline is not None:
+            del self._pipeline
+            self._pipeline = None
+        self._initialized = False
+        self._initialization_error = None
 
     def _parse_scores(self, results: list[dict]) -> SentimentScores:
         """Parse pipeline output into SentimentScores."""

@@ -4,9 +4,12 @@ Analyzes sentiment of financial/business text with specialized model.
 """
 
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class FinancialSentiment(BaseModel):
@@ -55,7 +58,7 @@ class FinBERTService:
             import torch
 
             model_name = "ProsusAI/finbert"
-            print(f"Loading FinBERT model: {model_name}")
+            logger.info("Loading FinBERT model: %s", model_name)
 
             self._tokenizer = AutoTokenizer.from_pretrained(model_name)
             self._model = AutoModelForSequenceClassification.from_pretrained(model_name)
@@ -77,11 +80,26 @@ class FinBERTService:
             )
 
             self._initialized = True
-            print(f"FinBERT service initialized on {self._device}")
+            logger.info("FinBERT service initialized on %s", self._device)
 
         except Exception as e:
             self._initialization_error = str(e)
-            print(f"Failed to initialize FinBERT service: {e}")
+            logger.error("Failed to initialize FinBERT service: %s", e)
+
+    def shutdown(self) -> None:
+        """Shut down executor and release models from memory."""
+        self._executor.shutdown(wait=False)
+        if self._pipeline is not None:
+            del self._pipeline
+            self._pipeline = None
+        if self._model is not None:
+            del self._model
+            self._model = None
+        if self._tokenizer is not None:
+            del self._tokenizer
+            self._tokenizer = None
+        self._initialized = False
+        self._initialization_error = None
 
     def _analyze_sync(self, text: str) -> FinancialSentiment:
         """
@@ -135,7 +153,7 @@ class FinBERTService:
             )
 
         except Exception as e:
-            print(f"FinBERT analysis error: {e}")
+            logger.error("FinBERT analysis error: %s", e)
             return FinancialSentiment(
                 text=text,
                 sentiment="neutral",
@@ -199,7 +217,7 @@ class FinBERTService:
             return sentiments
 
         except Exception as e:
-            print(f"FinBERT batch analysis error: {e}")
+            logger.error("FinBERT batch analysis error: %s", e)
             return [
                 FinancialSentiment(
                     text=t,
@@ -244,7 +262,7 @@ class FinBERTService:
             return result
 
         except Exception as e:
-            print(f"FinBERT analysis failed: {e}")
+            logger.error("FinBERT analysis failed: %s", e)
             return FinancialSentiment(
                 text=text or "",
                 sentiment="neutral",
@@ -291,7 +309,7 @@ class FinBERTService:
             return results
 
         except Exception as e:
-            print(f"FinBERT batch analysis failed: {e}")
+            logger.error("FinBERT batch analysis failed: %s", e)
             return [
                 FinancialSentiment(
                     text=t or "",

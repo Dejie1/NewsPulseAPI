@@ -4,10 +4,13 @@ Detects Magnificent 7 company mentions in article text.
 """
 
 import asyncio
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 # Magnificent 7 company aliases mapping
@@ -119,13 +122,20 @@ class NERService:
             self._nlp.add_pipe("sentencizer")
 
             self._initialized = True
-            print("NER service initialized successfully with GLiNER-spaCy")
+            logger.info("NER service initialized successfully with GLiNER-spaCy")
 
         except Exception as e:
-            import traceback
             self._initialization_error = str(e)
-            print(f"Failed to initialize NER service: {e}")
-            traceback.print_exc()
+            logger.error("Failed to initialize NER service: %s", e, exc_info=True)
+
+    def shutdown(self) -> None:
+        """Shut down executor and release NLP model."""
+        self._executor.shutdown(wait=False)
+        if self._nlp is not None:
+            del self._nlp
+            self._nlp = None
+        self._initialized = False
+        self._initialization_error = None
 
     def _extract_sentence(self, text: str, start: int, end: int) -> str:
         """Extract the sentence containing the entity."""
@@ -226,7 +236,7 @@ class NERService:
             return entities
 
         except Exception as e:
-            print(f"NER extraction error: {e}")
+            logger.error("NER extraction error: %s", e)
             return []
 
     def _extract_with_fallback(self, text: str) -> list[CompanyEntity]:
@@ -312,7 +322,7 @@ class NERService:
             return entities
 
         except Exception as e:
-            print(f"NER extraction failed: {e}")
+            logger.error("NER extraction failed: %s", e)
             return self._extract_with_fallback(text)
 
     async def extract_companies_batch(

@@ -3,6 +3,7 @@ Simple in-memory cache for aggregated articles.
 For POC purposes - can be replaced with Redis/database later.
 """
 
+import asyncio
 import time
 from typing import Optional
 from app.models import Article
@@ -18,7 +19,7 @@ class CacheService:
         self.ttl_seconds = ttl_seconds
         self._articles: list[Article] = []
         self._last_update: Optional[float] = None
-        self._is_updating: bool = False
+        self._update_lock = asyncio.Lock()
 
     def get_articles(self) -> Optional[list[Article]]:
         """
@@ -63,16 +64,19 @@ class CacheService:
     @property
     def is_updating(self) -> bool:
         """Check if cache is currently being updated."""
-        return self._is_updating
-
-    @is_updating.setter
-    def is_updating(self, value: bool) -> None:
-        self._is_updating = value
+        return self._update_lock.locked()
 
     @property
     def last_update_time(self) -> Optional[float]:
         """Get the timestamp of last update."""
         return self._last_update
+
+    def update_article(self, updated_article: Article) -> None:
+        """Update a single article in-place without resetting TTL."""
+        for i, a in enumerate(self._articles):
+            if a.link == updated_article.link:
+                self._articles[i] = updated_article
+                break
 
 
 # Global cache instance

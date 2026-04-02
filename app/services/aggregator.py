@@ -49,10 +49,10 @@ class AggregatorService:
                     sources_fetched=len(get_feed_sources()),
                     sources_failed=0,
                     cached=True,
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
 
-        # Prevent concurrent updates
+        # Prevent concurrent updates using async lock
         if self.cache.is_updating:
             # Return stale cache if available during update
             cached = self.cache.get_articles()
@@ -62,17 +62,12 @@ class AggregatorService:
                     articles=cached,
                     total_count=len(cached),
                     cached=True,
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc),
                     errors=["Update in progress, returning cached data"]
                 )
 
-        # Mark as updating
-        self.cache.is_updating = True
-
-        try:
+        async with self.cache._update_lock:
             return await self._perform_aggregation()
-        finally:
-            self.cache.is_updating = False
 
     async def _perform_aggregation(self) -> AggregationResult:
         """
@@ -128,7 +123,7 @@ class AggregatorService:
             sources_fetched=len(sources),
             sources_failed=sources_failed,
             cached=False,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             errors=errors
         )
 
@@ -234,13 +229,8 @@ class AggregatorService:
         return len(updated)
 
     def _update_article_in_cache(self, updated_article: Article) -> None:
-        """Update a single article in the cache."""
-        articles = self.cache.get_articles() or []
-        for i, a in enumerate(articles):
-            if a.link == updated_article.link:
-                articles[i] = updated_article
-                break
-        self.cache.set_articles(articles)
+        """Update a single article in the cache without resetting TTL."""
+        self.cache.update_article(updated_article)
 
     def get_article_by_url(self, url: str) -> Optional[Article]:
         """Get a specific article by URL from cache."""

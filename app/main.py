@@ -3,6 +3,7 @@ FastAPI application entry point.
 News Aggregator API for React Native app.
 """
 
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,18 +11,47 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routes.news import router as news_router
 
+# Configure structured logging for all app modules
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Application lifespan events.
-    Can be used for startup/shutdown tasks.
+    Handles startup and graceful shutdown of services.
     """
-    # Startup: Could pre-populate cache here if needed
-    print(f"Starting {settings.app_name}...")
+    logger.info("Starting %s...", settings.app_name)
     yield
-    # Shutdown: Cleanup if needed
-    print("Shutting down...")
+    # Shutdown: clean up thread pools and ML models
+    logger.info("Shutting down services...")
+
+    from app.services.content_extractor import get_content_extractor
+    from app.services.summarizer import get_summarization_service
+    from app.services.sentiment import get_sentiment_analyzer
+    from app.services.finbert_service import get_finbert_service
+    from app.services.ner_service import get_ner_service
+
+    get_content_extractor().shutdown()
+    get_sentiment_analyzer().unload()
+
+    finbert = get_finbert_service()
+    finbert.shutdown()
+
+    ner = get_ner_service()
+    ner.shutdown()
+
+    summarizer = get_summarization_service().summarizer
+    if hasattr(summarizer, "shutdown"):
+        summarizer.shutdown()
+
+    logger.info("Shutdown complete.")
 
 
 app = FastAPI(

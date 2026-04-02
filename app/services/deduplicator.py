@@ -52,24 +52,29 @@ class Deduplicator:
         """
         Remove duplicate articles from a list.
         Keeps the first occurrence of each unique article.
-        Uses both URL and title-based deduplication.
+        Deduplicates on URL (primary) and title+source (secondary).
+        Title-only dedup was too aggressive — different sources can
+        legitimately have similar titles for the same news event.
         """
         seen_urls: set[str] = set()
-        seen_titles: set[str] = set()
+        seen_title_source: set[tuple[str, str]] = set()
         unique_articles: list[Article] = []
 
         for article in articles:
             normalized_url = Deduplicator.normalize_url(article.link)
             normalized_title = Deduplicator.normalize_title(article.title)
 
-            # Skip if we've seen this URL or very similar title
+            # Skip if we've seen this exact URL
             if normalized_url in seen_urls:
                 continue
-            if normalized_title in seen_titles:
+
+            # Skip if same title from the same source (syndication duplicate)
+            title_source_key = (normalized_title, article.source.lower())
+            if title_source_key in seen_title_source:
                 continue
 
             seen_urls.add(normalized_url)
-            seen_titles.add(normalized_title)
+            seen_title_source.add(title_source_key)
             unique_articles.append(article)
 
         return unique_articles

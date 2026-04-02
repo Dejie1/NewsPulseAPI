@@ -3,14 +3,17 @@ Supabase service for syncing articles to the database.
 Matches the existing schema with sources, articles, and company_mentions tables.
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from supabase import create_client, Client
 
 from app.models import Article, SentimentResult
+
+logger = logging.getLogger(__name__)
 
 # Load .env file manually
 def _load_env_file():
@@ -51,6 +54,7 @@ class SupabaseService:
     def __init__(self):
         self._client: Optional[Client] = None
         self._sources_cache: dict[str, int] = {}  # domain -> source_id
+        self._companies_cache: dict[str, int] = {}  # ticker -> company_id
 
     @property
     def client(self) -> Client:
@@ -119,7 +123,7 @@ class SupabaseService:
                 return source_id
 
         except Exception as e:
-            print(f"Error creating source: {e}")
+            logger.error("Error creating source: %s", e)
 
         return None
 
@@ -156,9 +160,9 @@ class SupabaseService:
                 row["url"]: row["full_content"]
                 for row in (response.data or [])
             }
-            print(f"[upsert] Found {len(existing_content)} articles with existing content to preserve")
+            logger.info("[upsert] Found %s articles with existing content to preserve", len(existing_content))
         except Exception as e:
-            print(f"[upsert] Warning: Could not fetch existing content: {e}")
+            logger.error("[upsert] Warning: Could not fetch existing content: %s", e)
 
         # Process articles one by one to handle source lookups
         rows = []
@@ -214,7 +218,7 @@ class SupabaseService:
                 .execute()
             return True
         except Exception as e:
-            print(f"Error updating sentiment: {e}")
+            logger.error("Error updating sentiment: %s", e)
             return False
 
     async def upsert_sentiments(self, sentiments: list[SentimentResult]) -> dict:
@@ -294,14 +298,14 @@ class SupabaseService:
             return {row["url"] for row in (response.data or [])}
 
         except Exception as e:
-            print(f"Error fetching URLs with content: {e}")
+            logger.error("Error fetching URLs with content: %s", e)
             return set()
 
     async def delete_old_articles(self, days: int = 30) -> dict:
         """Delete articles older than specified days."""
         from datetime import timedelta
 
-        cutoff_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         try:
             response = self.client.table("articles")\
@@ -347,7 +351,7 @@ class SupabaseService:
             return response.data if response.data else []
 
         except Exception as e:
-            print(f"Error fetching companies: {e}")
+            logger.error("Error fetching companies: %s", e)
             return []
 
     async def get_company_by_ticker(self, ticker: str) -> Optional[int]:
@@ -361,9 +365,8 @@ class SupabaseService:
             Company ID or None if not found
         """
         # Check cache first
-        cache_key = f"company_{ticker}"
-        if cache_key in self._sources_cache:
-            return self._sources_cache[cache_key]
+        if ticker in self._companies_cache:
+            return self._companies_cache[ticker]
 
         try:
             response = self.client.table("companies")\
@@ -374,11 +377,11 @@ class SupabaseService:
 
             if response.data:
                 company_id = response.data["id"]
-                self._sources_cache[cache_key] = company_id
+                self._companies_cache[ticker] = company_id
                 return company_id
 
         except Exception as e:
-            print(f"Error fetching company {ticker}: {e}")
+            logger.error("Error fetching company %s: %s", ticker, e)
 
         return None
 
@@ -439,7 +442,7 @@ class SupabaseService:
             return articles
 
         except Exception as e:
-            print(f"Error fetching articles for analysis: {e}")
+            logger.error("Error fetching articles for analysis: %s", e)
             return []
 
     async def upsert_company_mentions(self, mentions: list[dict]) -> dict:
@@ -514,7 +517,7 @@ class SupabaseService:
         from datetime import timedelta
 
         try:
-            cutoff_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
+            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
             query = self.client.table("company_mentions")\
                 .select("*, articles(id, title, url, published_at), companies(name, ticker)")\
@@ -535,7 +538,7 @@ class SupabaseService:
             return response.data if response.data else []
 
         except Exception as e:
-            print(f"Error fetching company mentions: {e}")
+            logger.error("Error fetching company mentions: %s", e)
             return []
 
     async def seed_companies(self) -> dict:
@@ -638,7 +641,7 @@ class SupabaseService:
             return True
 
         except Exception as e:
-            print(f"Error updating daily metrics: {e}")
+            logger.error("Error updating daily metrics: %s", e)
             return False
 
     async def get_company_daily_metrics(
@@ -663,7 +666,7 @@ class SupabaseService:
             if not company_id:
                 return []
 
-            cutoff_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
 
             response = self.client.table("company_daily_metrics")\
                 .select("*")\
@@ -675,7 +678,7 @@ class SupabaseService:
             return response.data if response.data else []
 
         except Exception as e:
-            print(f"Error fetching daily metrics: {e}")
+            logger.error("Error fetching daily metrics: %s", e)
             return []
 
 
