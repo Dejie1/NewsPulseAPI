@@ -238,6 +238,13 @@ class RSSParserService:
         Handles various RSS formats and field names.
         """
         try:
+            # Skip non-English articles (e.g. FMT Malay articles tagged "Top BM")
+            tags = entry.get("tags", [])
+            if isinstance(tags, list):
+                for tag in tags:
+                    if isinstance(tag, dict) and (tag.get("term") or "").strip().lower() == "top bm":
+                        return None
+
             # Get title (required)
             title = entry.get("title", "").strip()
             if not title:
