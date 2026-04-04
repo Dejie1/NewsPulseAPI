@@ -86,6 +86,22 @@ FEED_SOURCES: list[FeedSource] = [
         category="business",
         full_content_in_feed=True
     ),
+    FeedSource(
+        name="NYTimes Technology",
+        url="https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+        category="technology"
+    ),
+    FeedSource(
+        name="CNBC",
+        url="https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
+        category="news"
+    ),
+    FeedSource(
+        name="The Atlantic",
+        url="https://www.theatlantic.com/feed/all/",
+        category="news",
+        full_content_in_feed=True
+    ),
 ]
 
 
