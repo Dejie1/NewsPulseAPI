@@ -81,9 +81,9 @@ FEED_SOURCES: list[FeedSource] = [
         category="technology"
     ),
     FeedSource(
-        name="SoyaCincau",
-        url="https://soyacincau.com/feed/",
-        category="technology",
+        name="Fortune",
+        url="https://fortune.com/feed/fortune-feeds/?id=3230629",
+        category="business",
         full_content_in_feed=True
     ),
 ]

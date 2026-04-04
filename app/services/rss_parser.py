@@ -43,7 +43,7 @@ CATEGORY_MAP: dict[str, str] = {
     # Business & Finance
     "business": "business", "finance": "business", "economy": "business",
     "markets": "business", "startups": "business", "venture capital": "business",
-    "cryptocurrency": "business", "crypto": "business",
+    "cryptocurrency": "business", "crypto": "business", "energy": "business",
     # News & Politics
     "news": "news", "politics": "news", "policy": "news",
     "world": "news", "law": "news", "government": "news",
