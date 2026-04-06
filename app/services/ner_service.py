@@ -164,14 +164,8 @@ class NERService:
         """
         normalized = text.lower().strip()
 
-        # Direct match
         if normalized in COMPANY_ALIASES:
             return COMPANY_ALIASES[normalized]
-
-        # Check if any alias is contained in the text
-        for alias, (name, ticker) in COMPANY_ALIASES.items():
-            if alias in normalized or normalized in alias:
-                return (name, ticker)
 
         return None
 

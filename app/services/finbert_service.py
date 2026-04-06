@@ -118,10 +118,7 @@ class FinBERTService:
             )
 
         try:
-            # Truncate text if too long
-            text = text[:512]
-
-            # Run inference
+            # Run inference (tokenizer handles truncation via max_length=512 tokens)
             results = self._pipeline(text)
 
             # results is a list with one element containing scores for all classes
@@ -181,8 +178,8 @@ class FinBERTService:
             ]
 
         try:
-            # Truncate all texts
-            texts = [t[:512] if t else "" for t in texts]
+            # Filter empty texts; tokenizer handles truncation via max_length=512 tokens
+            texts = [t if t else "" for t in texts]
 
             # Batch inference
             batch_results = self._pipeline(texts)
