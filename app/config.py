@@ -113,6 +113,11 @@ def get_feed_sources() -> list[FeedSource]:
     return FEED_SOURCES
 
 
+def get_source_names() -> list[str]:
+    """Get all configured feed source names."""
+    return [s.name for s in FEED_SOURCES]
+
+
 def add_feed_source(source: FeedSource) -> None:
     """Add a new feed source dynamically."""
     FEED_SOURCES.append(source)

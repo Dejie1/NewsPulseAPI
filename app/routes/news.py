@@ -26,7 +26,12 @@ from app.services.aggregator import get_aggregator
 from app.services.summarizer import get_summarization_service
 from app.services.sentiment import get_sentiment_analyzer
 from app.services.supabase_service import supabase_service
-from app.config import get_feed_sources, add_feed_source
+from app.config import get_feed_sources, get_source_names, add_feed_source
+
+from enum import Enum
+
+# Build enum dynamically from configured feed sources for Swagger dropdowns
+SourceName = Enum("SourceName", {name: name for name in get_source_names()}, type=str)
 
 router = APIRouter(prefix="/api/news")
 
@@ -37,7 +42,7 @@ async def get_news(
         False,
         description="Force refresh from sources, bypassing cache"
     ),
-    source: Optional[str] = Query(
+    source: Optional[SourceName] = Query(
         None,
         description="Filter by source name"
     ),
@@ -55,6 +60,9 @@ async def get_news(
 ) -> AggregationResult:
     """
     Get aggregated news articles.
+
+    > **Start here.** This is the entry point — call this first to populate the cache.
+    > Other endpoints (sentiment, summarize, company analysis) require article URLs from this response.
 
     - Returns cached data if available (fast response)
     - Use `force_refresh=true` to fetch fresh data from all sources
@@ -188,10 +196,12 @@ async def add_source(source: FeedSource) -> FeedSource:
 
 @router.get("/article", response_model=Article, tags=["Content & Summarization"])
 async def get_article_content(
-    url: str = Query(..., description="Article URL to fetch content for")
+    url: str = Query(..., description="Article URL from GET /api/news/ response")
 ) -> Article:
     """
     Get a specific article with full content extracted.
+
+    > **Prerequisite:** Call `GET /api/news/` first to populate the cache, then use a `link` value from the response.
 
     - Extracts the full article content from the URL
     - Caches the result for future requests
@@ -247,7 +257,7 @@ async def extract_content_batch(
 
 @router.get("/summarize", response_model=SummarizationResponse, tags=["Content & Summarization"])
 async def summarize_article(
-    url: str = Query(..., description="Article URL to summarize"),
+    url: str = Query(..., description="Article URL from GET /api/news/ response"),
     max_length: int = Query(
         200,
         ge=50,
@@ -258,16 +268,10 @@ async def summarize_article(
     """
     Summarize an article's content.
 
-    - First extracts content if not already done
-    - Then summarizes using configured summarizer
-    - Default: extractive summarization (no AI)
-    - Can be upgraded to AI summarization by configuring provider
+    > **Prerequisite:** Call `GET /api/news/` first to populate the cache, then use a `link` value from the response.
 
-    To enable AI summarization, configure in app startup:
-    ```python
-    from app.services.summarizer import configure_ai_summarizer
-    configure_ai_summarizer("openai", "your-api-key")
-    ```
+    - First extracts content if not already done
+    - Then summarizes using the LSA extractive algorithm
     """
     aggregator = get_aggregator()
     summarizer = get_summarization_service()
@@ -288,18 +292,19 @@ async def summarize_article(
 
 @router.get("/sentiment", response_model=SentimentResult, tags=["Sentiment Analysis"])
 async def analyze_article_sentiment(
-    url: str = Query(..., description="Article URL to analyze")
+    url: str = Query(..., description="Article URL from GET /api/news/ response")
 ) -> SentimentResult:
     """
     Analyze sentiment of a single article.
 
-    Uses RoBERTa (cardiffnlp/twitter-roberta-base-sentiment-latest) for
-    sentiment analysis on news text.
+    > **Prerequisite:** Call `GET /api/news/` first to populate the cache, then use a `link` value from the response.
+
+    Uses RoBERTa (cardiffnlp/twitter-roberta-base-sentiment-latest) for sentiment analysis.
 
     Returns:
-    - negative/neutral/positive: Probability scores (0-1)
-    - compound: Synthetic score (-1 to 1): positive - negative
-    - label: Overall sentiment classification
+    - **negative/neutral/positive**: Probability scores (0-1)
+    - **compound**: Synthetic score (-1 to 1) calculated as `positive - negative`
+    - **label**: Overall sentiment classification
     """
     aggregator = get_aggregator()
     analyzer = get_sentiment_analyzer()
@@ -329,7 +334,7 @@ async def analyze_article_sentiment(
 
 @router.get("/sentiment/batch", response_model=SentimentAnalysisResponse, tags=["Sentiment Analysis"])
 async def analyze_batch_sentiment(
-    source: Optional[str] = Query(None, description="Filter by source"),
+    source: Optional[SourceName] = Query(None, description="Filter by source"),
     limit: int = Query(10, ge=1, le=50, description="Number of articles to analyze")
 ) -> SentimentAnalysisResponse:
     """
@@ -489,7 +494,7 @@ async def sync_articles_to_supabase(
 
 @router.post("/supabase/sync/sentiments", tags=["Supabase Sync"])
 async def sync_sentiments_to_supabase(
-    source: Optional[str] = Query(None, description="Filter by source"),
+    source: Optional[SourceName] = Query(None, description="Filter by source"),
     limit: int = Query(50, ge=1, le=200, description="Number of articles to analyze")
 ) -> dict:
     """
@@ -548,7 +553,7 @@ async def sync_sentiments_to_supabase(
 @router.get("/supabase/articles", tags=["Supabase Sync"])
 async def get_articles_from_supabase(
     limit: int = Query(50, ge=1, le=200, description="Number of articles to fetch"),
-    source: Optional[str] = Query(None, description="Filter by source")
+    source: Optional[SourceName] = Query(None, description="Filter by source")
 ) -> dict:
     """
     Fetch articles directly from Supabase.
@@ -650,17 +655,19 @@ async def get_company_mentions(
 
 @router.post("/analyze/companies", response_model=CompanyAnalysisResponse, tags=["Company Analysis"])
 async def analyze_article_companies(
-    url: str = Query(..., description="Article URL to analyze")
+    url: str = Query(..., description="Article URL from GET /api/news/ response")
 ) -> CompanyAnalysisResponse:
     """
     Analyze company mentions in a single article.
 
+    > **Prerequisite:** Call `GET /api/news/` first to populate the cache, then use a `link` value from the response.
+
     - Extracts content if needed
-    - Runs GLiNER-spaCy NER to detect Magnificent 7 company mentions
-    - Analyzes financial sentiment with FinBERT for each mention
+    - Runs **GLiNER-spaCy** NER to detect Magnificent 7 company mentions
+    - Analyzes financial sentiment with **FinBERT** for each mention
     - Returns structured results with context and sentiment
 
-    Note: First call may be slow as ML models are loaded lazily.
+    **Note:** First call may be slow (~30-60s) as ML models are loaded lazily.
     """
     aggregator = get_aggregator()
 
