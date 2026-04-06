@@ -6,8 +6,6 @@ from app.services.deduplicator import Deduplicator
 from app.services.content_extractor import ContentExtractorService
 from app.services.summarizer import SummarizationService
 from app.services.sentiment import SentimentAnalyzer
-from app.services.recommender import RecommenderService
-
 __all__ = [
     "RSSParserService",
     "AggregatorService",
@@ -16,5 +14,4 @@ __all__ = [
     "ContentExtractorService",
     "SummarizationService",
     "SentimentAnalyzer",
-    "RecommenderService",
 ]

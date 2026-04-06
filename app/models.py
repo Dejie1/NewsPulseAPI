@@ -104,27 +104,6 @@ class SentimentAnalysisResponse(BaseModel):
 
 
 # =============================================================================
-# RECOMMENDATION MODELS
-# =============================================================================
-
-class RecommendationItem(BaseModel):
-    """A single recommendation."""
-    title: str
-    link: str
-    source: str
-    similarity_score: float = Field(ge=0, le=1, description="How similar to the query article")
-    published_at: datetime
-
-
-class RecommendationResponse(BaseModel):
-    """Response for recommendation endpoints."""
-    success: bool
-    query_article: Optional[str] = None
-    recommendations: list[RecommendationItem] = Field(default_factory=list)
-    algorithm: str = "tfidf_cosine"
-
-
-# =============================================================================
 # COMPANY ANALYSIS MODELS (NER + FinBERT)
 # =============================================================================
 

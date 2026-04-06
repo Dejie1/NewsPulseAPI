@@ -18,8 +18,6 @@ from app.models import (
     SummarizationResponse,
     SentimentResult,
     SentimentAnalysisResponse,
-    RecommendationItem,
-    RecommendationResponse,
     CompanyMentionResult,
     ArticleCompanyAnalysis,
     CompanyAnalysisResponse,
@@ -27,14 +25,13 @@ from app.models import (
 from app.services.aggregator import get_aggregator
 from app.services.summarizer import get_summarization_service
 from app.services.sentiment import get_sentiment_analyzer
-from app.services.recommender import get_recommender
 from app.services.supabase_service import supabase_service
 from app.config import get_feed_sources, add_feed_source
 
-router = APIRouter(prefix="/api/news", tags=["news"])
+router = APIRouter(prefix="/api/news")
 
 
-@router.get("/", response_model=AggregationResult)
+@router.get("/", response_model=AggregationResult, tags=["News Feed"])
 async def get_news(
     force_refresh: bool = Query(
         False,
@@ -86,7 +83,7 @@ async def get_news(
     return await aggregator.aggregate(force_refresh=force_refresh)
 
 
-@router.post("/aggregate", response_model=AggregationResult)
+@router.post("/aggregate", response_model=AggregationResult, tags=["News Feed"])
 async def trigger_aggregation(
     force_refresh: bool = Query(
         True,
@@ -104,7 +101,7 @@ async def trigger_aggregation(
     return await aggregator.aggregate(force_refresh=force_refresh)
 
 
-@router.post("/aggregate/background", response_model=TriggerResponse)
+@router.post("/aggregate/background", response_model=TriggerResponse, tags=["News Feed"])
 async def trigger_aggregation_background(
     background_tasks: BackgroundTasks
 ) -> TriggerResponse:
@@ -142,7 +139,7 @@ async def trigger_aggregation_background(
     )
 
 
-@router.get("/status", response_model=AggregationStatus)
+@router.get("/status", response_model=AggregationStatus, tags=["News Feed"])
 async def get_status() -> AggregationStatus:
     """
     Get the current status of the aggregator.
@@ -155,7 +152,7 @@ async def get_status() -> AggregationStatus:
     return aggregator.get_status()
 
 
-@router.delete("/cache")
+@router.delete("/cache", tags=["News Feed"])
 async def clear_cache() -> dict:
     """
     Clear the article cache.
@@ -168,7 +165,7 @@ async def clear_cache() -> dict:
     return {"message": "Cache cleared successfully"}
 
 
-@router.get("/sources", response_model=list[FeedSource])
+@router.get("/sources", response_model=list[FeedSource], tags=["News Feed"])
 async def get_sources() -> list[FeedSource]:
     """
     Get the list of configured feed sources.
@@ -176,7 +173,7 @@ async def get_sources() -> list[FeedSource]:
     return get_feed_sources()
 
 
-@router.post("/sources", response_model=FeedSource)
+@router.post("/sources", response_model=FeedSource, tags=["News Feed"])
 async def add_source(source: FeedSource) -> FeedSource:
     """
     Add a new feed source dynamically.
@@ -188,11 +185,8 @@ async def add_source(source: FeedSource) -> FeedSource:
     return source
 
 
-# =============================================================================
-# CONTENT EXTRACTION ENDPOINTS
-# =============================================================================
 
-@router.get("/article", response_model=Article)
+@router.get("/article", response_model=Article, tags=["Content & Summarization"])
 async def get_article_content(
     url: str = Query(..., description="Article URL to fetch content for")
 ) -> Article:
@@ -217,7 +211,7 @@ async def get_article_content(
     return article
 
 
-@router.post("/extract-content", response_model=dict)
+@router.post("/extract-content", response_model=dict, tags=["Content & Summarization"])
 async def extract_content_batch(
     background_tasks: BackgroundTasks,
     limit: int = Query(
@@ -250,11 +244,8 @@ async def extract_content_batch(
     }
 
 
-# =============================================================================
-# SUMMARIZATION ENDPOINTS
-# =============================================================================
 
-@router.get("/summarize", response_model=SummarizationResponse)
+@router.get("/summarize", response_model=SummarizationResponse, tags=["Content & Summarization"])
 async def summarize_article(
     url: str = Query(..., description="Article URL to summarize"),
     max_length: int = Query(
@@ -294,11 +285,8 @@ async def summarize_article(
     return await summarizer.summarize_article(article, max_length=max_length)
 
 
-# =============================================================================
-# SENTIMENT ANALYSIS ENDPOINTS
-# =============================================================================
 
-@router.get("/sentiment", response_model=SentimentResult)
+@router.get("/sentiment", response_model=SentimentResult, tags=["Sentiment Analysis"])
 async def analyze_article_sentiment(
     url: str = Query(..., description="Article URL to analyze")
 ) -> SentimentResult:
@@ -339,7 +327,7 @@ async def analyze_article_sentiment(
     )
 
 
-@router.get("/sentiment/batch", response_model=SentimentAnalysisResponse)
+@router.get("/sentiment/batch", response_model=SentimentAnalysisResponse, tags=["Sentiment Analysis"])
 async def analyze_batch_sentiment(
     source: Optional[str] = Query(None, description="Filter by source"),
     limit: int = Query(10, ge=1, le=50, description="Number of articles to analyze")
@@ -402,7 +390,7 @@ async def analyze_batch_sentiment(
     )
 
 
-@router.post("/sentiment/text")
+@router.post("/sentiment/text", tags=["Sentiment Analysis"])
 async def analyze_text_sentiment(
     text: str = Query(..., description="Text to analyze")
 ) -> dict:
@@ -424,131 +412,8 @@ async def analyze_text_sentiment(
     }
 
 
-# =============================================================================
-# RECOMMENDATION ENDPOINTS
-# =============================================================================
 
-@router.post("/recommendations/build")
-async def build_recommendation_index() -> dict:
-    """
-    Build/rebuild the recommendation index from cached articles.
-
-    Call this after fetching news to enable recommendations.
-    The index is built using TF-IDF vectorization.
-    """
-    aggregator = get_aggregator()
-    recommender = get_recommender()
-
-    # Get all cached articles
-    articles = aggregator.get_cached_articles(limit=200)
-
-    if not articles:
-        return {
-            "success": False,
-            "message": "No articles in cache. Fetch news first with GET /api/news/",
-            "articles_indexed": 0
-        }
-
-    # Build the recommendation index
-    recommender.fit(articles)
-
-    return {
-        "success": True,
-        "message": "Recommendation index built successfully",
-        "articles_indexed": recommender.article_count
-    }
-
-
-@router.get("/recommendations", response_model=RecommendationResponse)
-async def get_recommendations(
-    url: str = Query(..., description="Article URL to get recommendations for"),
-    limit: int = Query(5, ge=1, le=20, description="Number of recommendations")
-) -> RecommendationResponse:
-    """
-    Get article recommendations based on a given article.
-
-    Uses TF-IDF and cosine similarity to find articles with similar content.
-    Make sure to call POST /recommendations/build first to build the index.
-    """
-    recommender = get_recommender()
-
-    if not recommender.is_ready:
-        raise HTTPException(
-            status_code=400,
-            detail="Recommendation index not built. Call POST /api/news/recommendations/build first."
-        )
-
-    recommendations = recommender.get_recommendations(url, n_recommendations=limit)
-
-    if not recommendations:
-        # Article might not be in index
-        return RecommendationResponse(
-            success=False,
-            query_article=url,
-            recommendations=[],
-            algorithm="tfidf_cosine"
-        )
-
-    return RecommendationResponse(
-        success=True,
-        query_article=url,
-        recommendations=[
-            RecommendationItem(
-                title=r.article.title,
-                link=r.article.link,
-                source=r.article.source,
-                similarity_score=r.similarity_score,
-                published_at=r.article.published_at
-            )
-            for r in recommendations
-        ],
-        algorithm="tfidf_cosine"
-    )
-
-
-@router.get("/recommendations/search", response_model=RecommendationResponse)
-async def search_recommendations(
-    query: str = Query(..., description="Search query text"),
-    limit: int = Query(5, ge=1, le=20, description="Number of results")
-) -> RecommendationResponse:
-    """
-    Find articles similar to a search query.
-
-    Useful for implementing search functionality.
-    Uses TF-IDF to match query against article content.
-    """
-    recommender = get_recommender()
-
-    if not recommender.is_ready:
-        raise HTTPException(
-            status_code=400,
-            detail="Recommendation index not built. Call POST /api/news/recommendations/build first."
-        )
-
-    recommendations = recommender.get_recommendations_for_text(query, n_recommendations=limit)
-
-    return RecommendationResponse(
-        success=True,
-        query_article=f"search: {query}",
-        recommendations=[
-            RecommendationItem(
-                title=r.article.title,
-                link=r.article.link,
-                source=r.article.source,
-                similarity_score=r.similarity_score,
-                published_at=r.article.published_at
-            )
-            for r in recommendations
-        ],
-        algorithm="tfidf_cosine"
-    )
-
-
-# =============================================================================
-# SUPABASE SYNC ENDPOINTS
-# =============================================================================
-
-@router.get("/supabase/status")
+@router.get("/supabase/status", tags=["Supabase Sync"])
 async def supabase_status() -> dict:
     """
     Check if Supabase is configured and ready.
@@ -562,7 +427,7 @@ async def supabase_status() -> dict:
     }
 
 
-@router.post("/supabase/sync/articles")
+@router.post("/supabase/sync/articles", tags=["Supabase Sync"])
 async def sync_articles_to_supabase(
     force_refresh: bool = Query(
         False,
@@ -622,7 +487,7 @@ async def sync_articles_to_supabase(
     }
 
 
-@router.post("/supabase/sync/sentiments")
+@router.post("/supabase/sync/sentiments", tags=["Supabase Sync"])
 async def sync_sentiments_to_supabase(
     source: Optional[str] = Query(None, description="Filter by source"),
     limit: int = Query(50, ge=1, le=200, description="Number of articles to analyze")
@@ -680,7 +545,7 @@ async def sync_sentiments_to_supabase(
     }
 
 
-@router.get("/supabase/articles")
+@router.get("/supabase/articles", tags=["Supabase Sync"])
 async def get_articles_from_supabase(
     limit: int = Query(50, ge=1, le=200, description="Number of articles to fetch"),
     source: Optional[str] = Query(None, description="Filter by source")
@@ -705,7 +570,7 @@ async def get_articles_from_supabase(
     }
 
 
-@router.delete("/supabase/articles/old")
+@router.delete("/supabase/articles/old", tags=["Supabase Sync"])
 async def cleanup_old_articles(
     days: int = Query(30, ge=1, le=365, description="Delete articles older than N days")
 ) -> dict:
@@ -723,11 +588,8 @@ async def cleanup_old_articles(
     return result
 
 
-# =============================================================================
-# COMPANY ANALYSIS ENDPOINTS (NER + FinBERT)
-# =============================================================================
 
-@router.get("/companies")
+@router.get("/companies", tags=["Company Analysis"])
 async def get_tracked_companies() -> dict:
     """
     Get list of companies being tracked (Magnificent 7).
@@ -755,7 +617,7 @@ async def get_tracked_companies() -> dict:
     }
 
 
-@router.get("/companies/mentions/{ticker}")
+@router.get("/companies/mentions/{ticker}", tags=["Company Analysis"])
 async def get_company_mentions(
     ticker: str,
     limit: int = Query(20, ge=1, le=100, description="Number of mentions to return"),
@@ -786,7 +648,7 @@ async def get_company_mentions(
     }
 
 
-@router.post("/analyze/companies", response_model=CompanyAnalysisResponse)
+@router.post("/analyze/companies", response_model=CompanyAnalysisResponse, tags=["Company Analysis"])
 async def analyze_article_companies(
     url: str = Query(..., description="Article URL to analyze")
 ) -> CompanyAnalysisResponse:
@@ -845,7 +707,7 @@ async def analyze_article_companies(
     )
 
 
-@router.post("/analyze/companies/batch")
+@router.post("/analyze/companies/batch", tags=["Company Analysis"])
 async def analyze_companies_batch(
     background_tasks: BackgroundTasks,
     limit: int = Query(20, ge=1, le=50, description="Number of articles to analyze")
@@ -891,7 +753,7 @@ async def analyze_companies_batch(
     }
 
 
-@router.post("/supabase/seed/companies")
+@router.post("/supabase/seed/companies", tags=["Company Analysis"])
 async def seed_companies() -> dict:
     """
     Seed the companies table with Magnificent 7 companies.
@@ -908,7 +770,7 @@ async def seed_companies() -> dict:
     return result
 
 
-@router.post("/supabase/sync/companies")
+@router.post("/supabase/sync/companies", tags=["Supabase Sync"])
 async def sync_company_mentions(
     background_tasks: BackgroundTasks,
     limit: int = Query(50, ge=1, le=200, description="Number of articles to analyze"),
@@ -1002,7 +864,7 @@ async def sync_company_mentions(
     }
 
 
-@router.get("/companies/metrics/{ticker}")
+@router.get("/companies/metrics/{ticker}", tags=["Company Analysis"])
 async def get_company_metrics(
     ticker: str,
     days: int = Query(7, ge=1, le=90, description="Number of days to fetch")
@@ -1032,7 +894,7 @@ async def get_company_metrics(
     }
 
 
-@router.post("/supabase/sync/all")
+@router.post("/supabase/sync/all", tags=["Supabase Sync"])
 async def sync_all_to_supabase(
     background_tasks: BackgroundTasks,
     force_refresh: bool = Query(False, description="Force fetch fresh articles"),
