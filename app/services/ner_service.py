@@ -63,6 +63,9 @@ COMPANY_ALIASES: dict[str, tuple[str, str]] = {
     "nvda": ("Nvidia", "NVDA"),
 }
 
+# Aliases too ambiguous for regex fallback (common English words)
+REGEX_AMBIGUOUS_ALIASES = {"apple", "meta"}
+
 # GLiNER configuration
 GLINER_CONFIG = {
     "gliner_model": "urchade/gliner_small-v2",  # Using small model for better compatibility
@@ -243,10 +246,11 @@ class NERService:
         entities = []
         seen = set()
 
-        # Build regex pattern from company aliases
+        # Build regex pattern from company aliases, excluding ambiguous ones
         patterns = []
         for alias in COMPANY_ALIASES.keys():
-            # Escape special regex characters
+            if alias in REGEX_AMBIGUOUS_ALIASES:
+                continue
             escaped = re.escape(alias)
             patterns.append(escaped)
 
