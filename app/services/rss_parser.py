@@ -37,16 +37,24 @@ CATEGORY_MAP: dict[str, str] = {
     # Culture & Entertainment
     "culture": "culture", "entertainment": "culture", "gaming": "culture",
     "games": "culture", "movies": "culture", "music": "culture",
-    "lifestyle": "culture", "food": "culture", "arts": "culture",
+    "food": "culture", "arts": "culture",
     "tv": "culture", "streaming": "culture", "social media": "culture",
     "features": "culture",
+    # Lifestyle
+    "lifestyle": "lifestyle", "leisure": "lifestyle", "opinion": "lifestyle",
+    "travel": "lifestyle", "wellness": "lifestyle",
     # Business & Finance
     "business": "business", "finance": "business", "economy": "business",
     "markets": "business", "startups": "business", "venture capital": "business",
     "cryptocurrency": "business", "crypto": "business", "energy": "business",
-    # News & Politics
-    "news": "news", "politics": "news", "policy": "news",
-    "world": "news", "law": "news", "government": "news",
+    # Politics
+    "politics": "politics", "policy": "politics", "government": "politics",
+    "law": "politics", "nation": "politics", "election": "politics",
+    # World & International
+    "world": "world", "international": "world",
+    # Sports
+    "sports": "sports", "football": "sports", "soccer": "sports",
+    "basketball": "sports", "tennis": "sports", "f1": "sports",
     # Cars & Automotive
     "cars": "cars", "automotive": "cars", "ev": "cars",
     "electric vehicles": "cars", "transportation": "cars",

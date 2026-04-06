@@ -56,12 +56,12 @@ FEED_SOURCES: list[FeedSource] = [
     FeedSource(
         name="The Edge Malaysia",
         url="https://news.google.com/rss/search?q=https%3A%2F%2Ftheedgemalaysia.com%2F&hl=en-MY&gl=MY&ceid=MY%3Aen",
-        category="news"
+        category="general"
     ),
     FeedSource(
         name="Free Malaysia Today",
         url="https://cms.freemalaysiatoday.com/feed",
-        category="news",
+        category="general",
         full_content_in_feed=True
     ),
     # FeedSource(

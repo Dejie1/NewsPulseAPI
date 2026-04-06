@@ -54,28 +54,53 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown complete.")
 
 
+openapi_tags = [
+    {
+        "name": "News Feed",
+        "description": "Core news aggregation pipeline. Fetches articles from multiple RSS sources with caching, deduplication, and pagination.",
+    },
+    {
+        "name": "Content & Summarization",
+        "description": "Full article content extraction via **trafilatura** and extractive summarization using the **LSA** algorithm.",
+    },
+    {
+        "name": "Sentiment Analysis",
+        "description": "General sentiment analysis powered by **RoBERTa** (`cardiffnlp/twitter-roberta-base-sentiment-latest`). Returns negative/neutral/positive probabilities and a compound score.",
+    },
+    {
+        "name": "Company Analysis",
+        "description": "Magnificent 7 stock tracking. Uses **GLiNER-spaCy** for Named Entity Recognition and **FinBERT** for financial sentiment analysis on detected company mentions.",
+    },
+    {
+        "name": "Supabase Sync",
+        "description": "Database synchronization layer. Syncs articles, sentiment scores, and company mentions to **Supabase** for persistence and mobile app consumption.",
+    },
+]
+
 app = FastAPI(
-    title=settings.app_name,
-    description="""
-    News Aggregator API - POC for React Native app.
-
-    ## Features
-    - Aggregate news from multiple RSS sources
-    - In-memory caching with configurable TTL
-    - Rate limiting to avoid overwhelming sources
-    - Deduplication based on URL and title
-    - Background aggregation support
-
-    ## Usage
-    - `GET /api/news/` - Get aggregated articles (uses cache)
-    - `POST /api/news/aggregate` - Trigger fresh aggregation
-    - `GET /api/news/status` - Check aggregator status
-
-    ## For Cron Jobs
-    Call `POST /api/news/aggregate` periodically to keep cache fresh.
-    """,
+    title="NewsPulse Aggregator API",
+    description=(
+        "Backend API powering the **NewsPulse** mobile app — a real-time news aggregation "
+        "and analysis platform built as a Final Year Project.\n\n"
+        "## Architecture\n\n"
+        "```\n"
+        "RSS Feeds → Aggregator → Content Extraction → NLP Analysis → Supabase → Mobile App\n"
+        "```\n\n"
+        "## Key Capabilities\n\n"
+        "| Feature | Technology |\n"
+        "|---|---|\n"
+        "| News Aggregation | feedparser + rate-limited RSS fetching |\n"
+        "| Content Extraction | trafilatura + curl-cffi |\n"
+        "| Sentiment Analysis | RoBERTa (cardiffnlp) |\n"
+        "| Financial Sentiment | FinBERT (ProsusAI) |\n"
+        "| Entity Recognition | GLiNER-spaCy NER |\n"
+        "| Recommendations | Personalized scoring via Supabase RPC |\n"
+        "| Database | Supabase (PostgreSQL) |\n"
+        "| Mobile App | React Native + Expo |\n"
+    ),
     version="1.0.0",
-    lifespan=lifespan
+    openapi_tags=openapi_tags,
+    lifespan=lifespan,
 )
 
 # CORS middleware for React Native app
@@ -91,25 +116,16 @@ app.add_middleware(
 app.include_router(news_router)
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 async def root():
-    """Root endpoint with API info."""
-    return {
-        "name": settings.app_name,
-        "version": "1.0.0",
-        "docs": "/docs",
-        "endpoints": {
-            "get_news": "GET /api/news/",
-            "trigger_aggregation": "POST /api/news/aggregate",
-            "status": "GET /api/news/status",
-            "sources": "GET /api/news/sources"
-        }
-    }
+    """Redirect to API documentation."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/docs")
 
 
-@app.get("/health")
+@app.get("/health", tags=["News Feed"])
 async def health_check():
-    """Health check endpoint for monitoring."""
+    """Health check endpoint for monitoring and uptime verification."""
     return {"status": "healthy"}
 
 
