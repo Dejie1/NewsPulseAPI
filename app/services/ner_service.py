@@ -64,7 +64,7 @@ COMPANY_ALIASES: dict[str, tuple[str, str]] = {
 }
 
 # Aliases too ambiguous for regex fallback (common English words)
-REGEX_AMBIGUOUS_ALIASES = {"apple", "meta"}
+REGEX_AMBIGUOUS_ALIASES = {"apple", "meta", "facebook"}
 
 # GLiNER configuration
 GLINER_CONFIG = {
