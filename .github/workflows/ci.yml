@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      # `app/services/__init__.py` eagerly imports the full pipeline (torch,
+      # transformers, gliner, spacy, sumy), so even unit tests that only touch
+      # the deduplicator or cache trigger the whole tree. We install the full
+      # locked environment here; the uv cache makes follow-up runs fast.
+      - name: Install dependencies
+        run: uv sync --group dev --frozen
+
+      - name: Run tests
+        run: uv run pytest -q
