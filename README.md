@@ -1,6 +1,6 @@
-# News Aggregator API
+# NewsPulse Aggregator API
 
-A FastAPI-based RSS news aggregator service designed for a React Native app.
+FastAPI service that ingests RSS feeds, runs NLP analysis (sentiment, NER, financial sentiment), and **syncs the results to Supabase**.
 
 ## Quick Start
 
@@ -8,11 +8,7 @@ A FastAPI-based RSS news aggregator service designed for a React Native app.
 
 ```bash
 uv sync
-```
-
-### 2. Run the Server
-
-```bash
+uv run python -m nltk.downloader vader_lexicon
 # Development mode with auto-reload
 uv run uvicorn app.main:app --reload --port 8000
 
@@ -20,10 +16,9 @@ uv run uvicorn app.main:app --reload --port 8000
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-### 3. Access the API
 
-- **API Docs**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/health
+- **API docs:** http://localhost:8000/docs
+- **Health check:** http://localhost:8000/health
 
 ## API Endpoints
 
@@ -346,23 +341,15 @@ ollama pull llama2
 configure_ai_summarizer("ollama", "", model="llama2")
 ```
 
-## Cron Job Setup
+## Cron job
 
-To keep the cache fresh automatically:
+Aggregation is driven by an external cron entry on the host (the API does not self-schedule):
 
-### Linux/Mac
-
-```bash
-# Run every 5 minutes
-*/5 * * * * curl -X POST http://localhost:8000/api/news/aggregate
+```cron
+*/5 * * * * curl -fsS -X POST http://localhost:8000/api/news/aggregate >> /var/log/newspulse-agg.log 2>&1
 ```
 
-### Windows Task Scheduler
-
-Create a scheduled task that runs:
-```
-curl -X POST http://localhost:8000/api/news/aggregate
-```
+The endpoint runs synchronously and returns the aggregation result; `>> log 2>&1` keeps a record of failures so a dead source surfaces in the host logs rather than silently breaking the feed.
 
 ## Tech Stack Summary
 
