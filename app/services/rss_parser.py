@@ -7,15 +7,16 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
+
 import feedparser
 import httpx
 from dateutil import parser as date_parser
 
-logger = logging.getLogger(__name__)
-
-from app.models import Article, FeedSource
 from app.config import settings
+from app.models import Article, FeedSource
 from app.utils.rate_limiter import get_rate_limiter
+
+logger = logging.getLogger(__name__)
 
 
 # Mapping of common RSS tag terms to normalized categories.

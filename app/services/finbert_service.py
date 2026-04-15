@@ -109,7 +109,7 @@ class FinBERTService:
         """
         if not self._initialized or not text:
             return FinancialSentiment(
-                text=text or "",
+                text=text,
                 sentiment="neutral",
                 score=0.5,
                 positive_prob=0.33,
@@ -167,7 +167,7 @@ class FinBERTService:
         if not self._initialized or not texts:
             return [
                 FinancialSentiment(
-                    text=t or "",
+                    text=t,
                     sentiment="neutral",
                     score=0.5,
                     positive_prob=0.33,
@@ -241,7 +241,7 @@ class FinBERTService:
 
         if self._initialization_error:
             return FinancialSentiment(
-                text=text or "",
+                text=text,
                 sentiment="neutral",
                 score=0.5,
                 positive_prob=0.33,
@@ -261,7 +261,7 @@ class FinBERTService:
         except Exception as e:
             logger.error("FinBERT analysis failed: %s", e)
             return FinancialSentiment(
-                text=text or "",
+                text=text,
                 sentiment="neutral",
                 score=0.5,
                 positive_prob=0.33,
@@ -286,7 +286,7 @@ class FinBERTService:
         if self._initialization_error or not texts:
             return [
                 FinancialSentiment(
-                    text=t or "",
+                    text=t,
                     sentiment="neutral",
                     score=0.5,
                     positive_prob=0.33,
@@ -309,7 +309,7 @@ class FinBERTService:
             logger.error("FinBERT batch analysis failed: %s", e)
             return [
                 FinancialSentiment(
-                    text=t or "",
+                    text=t,
                     sentiment="neutral",
                     score=0.5,
                     positive_prob=0.33,

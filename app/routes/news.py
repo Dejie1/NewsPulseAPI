@@ -4,11 +4,13 @@ Provides endpoints for triggering aggregation and fetching articles.
 """
 
 import logging
+from datetime import datetime, timezone
+from enum import Enum
 from typing import Optional
-from fastapi import APIRouter, Query, BackgroundTasks, HTTPException
 
-logger = logging.getLogger(__name__)
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
+from app.config import add_feed_source, get_feed_sources, get_source_names
 from app.models import (
     Article,
     AggregationResult,
@@ -26,9 +28,8 @@ from app.services.aggregator import get_aggregator
 from app.services.summarizer import get_summarization_service
 from app.services.sentiment import get_sentiment_analyzer
 from app.services.supabase_service import supabase_service
-from app.config import get_feed_sources, get_source_names, add_feed_source
 
-from enum import Enum
+logger = logging.getLogger(__name__)
 
 # Build enum dynamically from configured feed sources for Swagger dropdowns
 SourceName = Enum("SourceName", {name: name for name in get_source_names()}, type=str)
@@ -78,7 +79,6 @@ async def get_news(
             limit=limit,
             offset=offset
         )
-        status = aggregator.get_status()
         return AggregationResult(
             success=True,
             articles=articles,
@@ -456,7 +456,7 @@ async def sync_articles_to_supabase(
     if not supabase_service.is_configured():
         raise HTTPException(
             status_code=503,
-            detail="Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY"
+            detail="Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env"
         )
 
     aggregator = get_aggregator()
@@ -507,7 +507,7 @@ async def sync_sentiments_to_supabase(
     if not supabase_service.is_configured():
         raise HTTPException(
             status_code=503,
-            detail="Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY"
+            detail="Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env"
         )
 
     aggregator = get_aggregator()
@@ -846,7 +846,6 @@ async def sync_company_mentions(
                 logger.info("Synced %d company mentions", result.get("inserted", 0))
 
                 # Update daily metrics for companies with mentions today
-                from datetime import datetime, timezone
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
                 company_ids_with_mentions = set(m["company_id"] for m in all_mentions)
@@ -920,7 +919,7 @@ async def sync_all_to_supabase(
     if not supabase_service.is_configured():
         raise HTTPException(
             status_code=503,
-            detail="Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY"
+            detail="Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env"
         )
 
     async def full_sync():
@@ -1023,7 +1022,6 @@ async def sync_all_to_supabase(
                     await supabase_service.upsert_company_mentions(all_mentions)
 
                     # 8. Update daily metrics for companies with mentions today
-                    from datetime import datetime, timezone
                     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
                     # Get unique company_ids from mentions

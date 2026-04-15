@@ -190,7 +190,7 @@ class CompanyAnalysisService:
         async def analyze_one(article: dict) -> list[dict]:
             async with semaphore:
                 article_id = article.get("id")
-                content = article.get("full_content") or article.get("content") or ""
+                content = article.get("full_content")
                 title = article.get("title", "")
 
                 if not content:

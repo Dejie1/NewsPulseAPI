@@ -4,48 +4,16 @@ Matches the existing schema with sources, articles, and company_mentions tables.
 """
 
 import logging
-import os
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from typing import Optional
-from datetime import datetime, timezone
 from urllib.parse import urlparse
-from supabase import create_client, Client
 
+from supabase import Client, create_client
+
+from app.config import supabase_settings
 from app.models import Article, SentimentResult
 
 logger = logging.getLogger(__name__)
-
-# Load .env file manually
-def _load_env_file():
-    """Load environment variables from .env file."""
-    env_path = Path(__file__).parent.parent.parent / ".env"
-    if env_path.exists():
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    os.environ.setdefault(key.strip(), value.strip())
-
-_load_env_file()
-
-
-def get_supabase_credentials() -> tuple[str, str]:
-    """Get Supabase credentials from environment, supporting multiple prefixes."""
-    # Prefer clean names, fall back to NEXT_PUBLIC_* for compatibility
-    url = (
-        os.getenv("SUPABASE_URL") or
-        os.getenv("NEXT_PUBLIC_SUPABASE_URL") or
-        ""
-    )
-    # Prefer service role key for server-side (bypasses RLS)
-    key = (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY") or
-        os.getenv("SUPABASE_ANON_KEY") or
-        os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY") or
-        ""
-    )
-    return url, key
 
 
 class SupabaseService:
@@ -60,19 +28,19 @@ class SupabaseService:
     def client(self) -> Client:
         """Lazy initialization of Supabase client."""
         if self._client is None:
-            url, key = get_supabase_credentials()
-            if not url or not key:
+            if not supabase_settings.is_configured:
                 raise ValueError(
                     "Supabase credentials not configured. "
-                    "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env"
+                    "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env"
                 )
-            self._client = create_client(url, key)
+            self._client = create_client(
+                supabase_settings.url, supabase_settings.service_role_key
+            )
         return self._client
 
     def is_configured(self) -> bool:
         """Check if Supabase is properly configured."""
-        url, key = get_supabase_credentials()
-        return bool(url and key)
+        return supabase_settings.is_configured
 
     def _extract_domain(self, url: str) -> str:
         """Extract domain from URL."""
@@ -269,8 +237,9 @@ class SupabaseService:
 
             return response.data if response.data else []
 
-        except Exception as e:
-            raise Exception(f"Error fetching articles from Supabase: {str(e)}")
+        except Exception:
+            logger.exception("Error fetching articles from Supabase")
+            raise
 
     async def get_article_by_url(self, url: str) -> Optional[dict]:
         """Get a single article by URL."""
@@ -305,8 +274,6 @@ class SupabaseService:
 
     async def delete_old_articles(self, days: int = 30) -> dict:
         """Delete articles older than specified days."""
-        from datetime import timedelta
-
         cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         try:
@@ -334,8 +301,9 @@ class SupabaseService:
 
             return response.data if response.data else []
 
-        except Exception as e:
-            raise Exception(f"Error fetching sources: {str(e)}")
+        except Exception:
+            logger.exception("Error fetching sources")
+            raise
 
 
     # =========================================================================
@@ -516,8 +484,6 @@ class SupabaseService:
         Returns:
             List of mention dicts with article and company info
         """
-        from datetime import timedelta
-
         try:
             cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
@@ -661,8 +627,6 @@ class SupabaseService:
         Returns:
             List of daily metric records
         """
-        from datetime import timedelta
-
         try:
             company_id = await self.get_company_by_ticker(ticker)
             if not company_id:

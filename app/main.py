@@ -103,7 +103,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# The wildcard CORS policy is a pragmatic choice for this project since the API is not exposed to the public and is only called by the dev machine and cron job. In a production environment, restrict`allow_origins` to known callers and drop `allow_credentials` accordingly.
+# API is not exposed to the public and is only called by the dev machine and cron job. Restrict`allow_origins` to known callers and drop `allow_credentials` accordingly in prod.
 
 app.add_middleware(
     CORSMiddleware,

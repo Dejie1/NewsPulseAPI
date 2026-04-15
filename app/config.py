@@ -3,12 +3,19 @@ Configuration for the news aggregator service.
 Feed sources and settings are defined here for easy modification.
 """
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from app.models import FeedSource
 
 
 class Settings(BaseSettings):
     """Application settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="AGGREGATOR_",
+        extra="ignore",
+    )
 
     # API Settings
     app_name: str = "News Aggregator API"
@@ -25,14 +32,27 @@ class Settings(BaseSettings):
     max_articles_per_feed: int = 50
     max_total_articles: int = 200
 
-    class Config:
-        env_file = ".env"
-        env_prefix = "AGGREGATOR_"
-        extra = "ignore"  # Ignore NEXT_PUBLIC_* and other env vars
+
+class SupabaseSettings(BaseSettings):
+    """Supabase credentials. Service-role key bypasses RLS, required server-side."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="SUPABASE_",
+        extra="ignore",
+    )
+
+    url: str = ""
+    service_role_key: str = ""
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.url and self.service_role_key)
 
 
 # Global settings instance
 settings = Settings()
+supabase_settings = SupabaseSettings()
 
 
 # Feed source configuration
