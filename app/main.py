@@ -103,10 +103,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware for React Native app
+# The wildcard CORS policy is a pragmatic choice for this project since the API is not exposed to the public and is only called by the dev machine and cron job. In a production environment, restrict`allow_origins` to known callers and drop `allow_credentials` accordingly.
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

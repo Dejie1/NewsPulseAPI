@@ -106,8 +106,10 @@ class SupabaseService:
                 self._sources_cache[domain] = source_id
                 return source_id
 
-        except Exception:
-            pass  # Source doesn't exist, create it
+        except Exception as exc:
+            # Lookup miss is the expected path on first sight of a domain;
+            # log at debug so real errors (network, RLS) are still discoverable.
+            logger.debug("Source lookup miss for domain %s: %s", domain, exc)
 
         try:
             # Create new source
