@@ -186,19 +186,7 @@ The summarizer uses **sumy** library with **LSA (Latent Semantic Analysis)** by 
 **Why this is better than simple truncation:**
 - Picks the **most important** sentences, not just the first ones
 - Understands semantic relationships between words
-- Used in real production systems
-- Still free, no API calls needed
-
-**The summarizer is also "AI-ready":**
-```python
-# Current (sumy - NLP-based):
-SumySummarizer        →  LSA/TextRank/LexRank algorithms
-
-# Future (with AI):
-OpenAISummarizer      →  Calls GPT-3.5/4 for intelligent summary
-ClaudeSummarizer      →  Calls Claude API for intelligent summary
-OllamaSummarizer      →  Uses local LLM (free, runs on your machine)
-```
+- No external API calls required
 
 ### Content Extraction with Trafilatura
 
@@ -310,35 +298,6 @@ app/
 │   └── rate_limiter.py        # Token bucket rate limiting
 └── routes/
     └── news.py                # API endpoints
-```
-
-## Enabling AI Summarization (Future)
-
-When you're ready to add AI-powered summarization:
-
-### Option 1: OpenAI
-
-```python
-# In app/main.py or startup
-from app.services.summarizer import configure_ai_summarizer
-configure_ai_summarizer("openai", "sk-your-api-key")
-```
-
-### Option 2: Claude (Anthropic)
-
-```python
-configure_ai_summarizer("claude", "sk-ant-your-api-key")
-```
-
-### Option 3: Ollama (Free, Local)
-
-```bash
-# Install Ollama and pull a model
-ollama pull llama2
-```
-
-```python
-configure_ai_summarizer("ollama", "", model="llama2")
 ```
 
 ## Cron job

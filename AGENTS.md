@@ -88,10 +88,9 @@ AGGREGATOR_REQUEST_TIMEOUT_SECONDS=10
 AGGREGATOR_MAX_ARTICLES_PER_FEED=50
 AGGREGATOR_MAX_TOTAL_ARTICLES=200
 
-# Supabase (supports multiple prefixes)
+# Supabase — required for sync endpoints
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-key
-# Or: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY
 ```
 
 ### Feed Sources
