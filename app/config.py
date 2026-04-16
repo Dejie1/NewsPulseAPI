@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     max_articles_per_feed: int = 50
     max_total_articles: int = 200
 
+    # Defaults to "*" for local dev; override in production.
+    allowed_origins: list[str] = ["*"]
+
 
 class SupabaseSettings(BaseSettings):
     """Supabase credentials. Service-role key bypasses RLS, required server-side."""

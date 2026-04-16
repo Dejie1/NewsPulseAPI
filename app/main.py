@@ -103,12 +103,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# API is not exposed to the public and is only called by the dev machine and cron job. Restrict`allow_origins` to known callers and drop `allow_credentials` accordingly in prod.
+# Disable credentials whenever origins are unrestricted.
+_origins = settings.allowed_origins
+_allow_credentials = _origins != ["*"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
