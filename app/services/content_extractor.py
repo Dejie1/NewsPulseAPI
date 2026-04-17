@@ -138,6 +138,7 @@ class ContentExtractorService:
                 block_webrtc=True,
                 humanize=True,
                 disable_ads=True,
+                timeout=60_000,  # ms; default is 30s but network_idle needs more headroom
             )
 
             html = page.html_content

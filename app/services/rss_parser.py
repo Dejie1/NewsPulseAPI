@@ -176,14 +176,21 @@ class RSSParserService:
             return articles
 
         resolved_count = 0
+        failed_count = 0
         for article in google_articles:
             try:
                 result = await asyncio.to_thread(new_decoderv1, article.link)
                 if result.get("status") and result.get("decoded_url"):
                     article.link = result["decoded_url"]
                     resolved_count += 1
-            except Exception:
-                pass  # Keep original Google News URL if decoding fails
+            except Exception as exc:
+                # Keep the original Google News URL so the article is still
+                # usable; surface the reason at debug level for diagnosis.
+                failed_count += 1
+                logger.debug("Google News URL decode failed for %s: %s", article.link, exc)
+
+        if failed_count:
+            logger.info("Google News decoder failed on %d/%d URLs", failed_count, len(google_articles))
 
         logger.info(
             "Resolved %d/%d Google News URLs to actual article URLs",
