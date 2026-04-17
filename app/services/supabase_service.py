@@ -3,6 +3,7 @@ Supabase service for syncing articles to the database.
 Matches the existing schema with sources, articles, and company_mentions tables.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -193,23 +194,36 @@ class SupabaseService:
 
     async def upsert_sentiments(self, sentiments: list[SentimentResult]) -> dict:
         """
-        Update overall_sentiment on articles.
-        Your schema stores sentiment directly on the articles table.
+        Update overall_sentiment on articles. Runs updates concurrently
+        (bounded) rather than as one bulk upsert — the articles table has
+        NOT NULL columns we don't repopulate here, so the INSERT fallback
+        on a missing URL would fail.
         """
         if not sentiments:
             return {"updated": 0, "errors": [], "message": "No sentiments to sync"}
 
         results = {"updated": 0, "errors": [], "total": len(sentiments)}
+        semaphore = asyncio.Semaphore(20)
 
-        for sentiment in sentiments:
-            try:
-                self.client.table("articles")\
-                    .update({"overall_sentiment": sentiment.compound})\
-                    .eq("url", sentiment.article_url)\
-                    .execute()
+        async def _update(sentiment: SentimentResult) -> tuple[bool, Optional[str]]:
+            async with semaphore:
+                try:
+                    await asyncio.to_thread(
+                        lambda: self.client.table("articles")
+                            .update({"overall_sentiment": sentiment.compound})
+                            .eq("url", sentiment.article_url)
+                            .execute()
+                    )
+                    return True, None
+                except Exception as e:
+                    return False, f"{sentiment.article_url}: {str(e)}"
+
+        outcomes = await asyncio.gather(*(_update(s) for s in sentiments))
+        for ok, err in outcomes:
+            if ok:
                 results["updated"] += 1
-            except Exception as e:
-                results["errors"].append(f"{sentiment.article_url}: {str(e)}")
+            elif err:
+                results["errors"].append(err)
 
         results["message"] = f"Updated sentiment for {results['updated']} articles"
         return results
